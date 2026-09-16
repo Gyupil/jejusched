@@ -13,7 +13,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 from ..config import AppConfig
-from ..core.normalize import parse_file_date
+from datetime import timedelta
+
+from ..core.normalize import normalize
 from ..core.state import State
 from ..parsers.base import ParseError, Parser
 
@@ -46,11 +48,28 @@ class Candidate:
     file_date: date | None = None
     status: str = PENDING
     reason: str = ""
+    #  파일에 실린 일정의 날짜 범위. 여기서 한 번 파싱하며 알아낸 값을 들고 다니면
+    #  force가 같은 파일을 다시 파싱하지 않아도 된다(설계서 Force).
+    event_start: date | None = None
+    event_end: date | None = None
 
     @property
     def rank(self) -> tuple[date, float]:
         """배치 축약의 정렬 기준: (파일 날짜, mtime)이 가장 큰 것이 정본."""
         return (self.file_date or date.min, self.mtime)
+
+    def window(self) -> tuple[date, date] | None:
+        """`Pipeline._window`와 **같은 범위** — 일정 최소일 -1일 ~ 최대일 +1일.
+
+        일정 날짜를 모르면 파일 날짜 하루로 좁힌다. 범위를 모른다고 전체를
+        지워 버리면 force가 의도보다 훨씬 넓게 동작한다.
+        """
+        start, end = self.event_start, self.event_end
+        if start is None or end is None:
+            if self.file_date is None:
+                return None
+            start = end = self.file_date
+        return start - timedelta(days=1), end + timedelta(days=1)
 
 
 @dataclass
@@ -97,7 +116,11 @@ class Intake:
             # 2) 헤더에서 파일 날짜를 얻는다. 실패하면 파일은 손대지 않는다.
             try:
                 parsed = self.parser.parse(path)
-                cand.file_date = parse_file_date(parsed, datetime.fromtimestamp(mtime).year)
+                file_date, events, _, _ = normalize(parsed, datetime.fromtimestamp(mtime).year)
+                cand.file_date = file_date
+                if events:
+                    cand.event_start = min(e.date for e in events)
+                    cand.event_end = max(e.date for e in events)
             except (ParseError, ValueError) as exc:
                 cand.status, cand.reason = FAILED, f"파싱 실패: {exc}"
                 log.error("%s: %s", path, cand.reason)

@@ -94,7 +94,13 @@ class Worker:
 
     # ------------------------------------------------------------- 처리
 
-    def process(self, paths: list[Path], *, force: bool = False) -> PipelineResult | None:
+    def process(
+        self,
+        paths: list[Path],
+        *,
+        force: bool = False,
+        before_apply: Callable[[I.Candidate, list], None] | None = None,
+    ) -> PipelineResult | None:
         settled = [p for p in paths if p.exists() and self._settle(p)]
         if not settled:
             return None
@@ -109,6 +115,11 @@ class Worker:
         if not targets:
             log.warning("등록된 계정이 없다 — %s를 적용하지 않는다", chosen.path.name)
             return None
+
+        #  어떤 파일이 정본인지 정해진 **뒤**, 적용하기 **전**에만 할 수 있는 일이 있다.
+        #  force의 `user_deleted` 정리가 그렇다 — 규칙 4가 그 기록을 읽기 때문이다.
+        if before_apply is not None:
+            before_apply(chosen, targets)
 
         log.info("적용 시작: %s (%s)", chosen.path.name, chosen.file_date)
         started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -149,14 +160,29 @@ class Worker:
         return result
 
     def force_refresh(self, path: Path | None = None, *, restore_deleted: bool = False) -> PipelineResult | None:
-        """설정 창의 '강제 새로고침' — 중복·오래된 파일 규칙을 무시한다(설계서 Force)."""
+        """설정 창의 '강제 새로고침' — 중복·오래된 파일 규칙을 무시한다(설계서 Force).
+
+        `restore_deleted`는 **그 파일이 덮는 날짜 범위의** 직접삭제 기록만 지운다.
+        범위를 두지 않으면 9월 파일을 force했을 뿐인데 8월에 직접 지운 일정까지
+        되살아난다 — 사용자가 지운 것을 되돌리는 셈이라 의도보다 훨씬 넓다.
+        """
         folder = Path(self.deps.config.watch_dir or ".")
         paths = [path] if path else scan_folder(folder, self.deps.config.file_glob)
-        if restore_deleted:
-            for target in self.deps.state.active_targets():
-                cleared = self.deps.state.clear_user_deleted(target.id)
-                log.info("%s: 직접 삭제 기록 %d건을 지웠다", target.email, cleared)
-        return self.process(paths, force=True)
+
+        def _clear_user_deleted(chosen: I.Candidate, targets: list) -> None:
+            window = chosen.window()
+            if window is None:
+                log.warning("%s: 날짜 범위를 몰라 직접 삭제 기록을 지우지 않는다", chosen.path.name)
+                return
+            start, end = window
+            for target in targets:
+                cleared = self.deps.state.clear_user_deleted(target.id, start, end)
+                log.info("%s: %s~%s의 직접 삭제 기록 %d건을 지웠다",
+                         target.email, start, end, cleared)
+
+        return self.process(
+            paths, force=True, before_apply=_clear_user_deleted if restore_deleted else None
+        )
 
     def _settle(self, path: Path) -> bool:
         """방금 쓰인 파일만 안정화를 기다린다.

@@ -54,6 +54,9 @@ class CalendarClient(Protocol):
 
     def delete_event(self, calendar_id: str, event_id: str) -> None: ...
 
+    def delete_calendar(self, calendar_id: str) -> None:
+        """보조 캘린더 자체를 지운다. **되돌릴 수 없다** — 기본 동작이 아니다(설계서 §5)."""
+
 
 # --------------------------------------------------------------- 변환
 
@@ -285,3 +288,14 @@ class GoogleCalendarClient:
         self._call(
             lambda: self._service.events().delete(calendarId=calendar_id, eventId=event_id)
         )
+
+    def delete_calendar(self, calendar_id: str) -> None:
+        """보조 캘린더와 그 안의 일정을 통째로 지운다.
+
+        계정 삭제의 **선택 옵션**이다(설계서 §5). 되돌릴 수 없으므로 호출하는
+        쪽에서 반드시 한 번 더 확인을 받는다. `primary`는 애초에 이 앱이 만든
+        캘린더가 아니라 지워지지 않지만, 실수로라도 넘어오면 여기서 막는다.
+        """
+        if not calendar_id or calendar_id == "primary":
+            raise CalendarError("기본 캘린더는 지울 수 없다")
+        self._call(lambda: self._service.calendars().delete(calendarId=calendar_id))

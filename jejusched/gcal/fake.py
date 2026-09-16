@@ -37,6 +37,11 @@ class FakeCalendarClient:
         self.events[cal_id] = {}
         return cal_id
 
+    def delete_calendar(self, calendar_id: str) -> None:
+        self.calls.append(("delete_calendar", calendar_id))
+        self.calendars.pop(calendar_id, None)
+        self.events.pop(calendar_id, None)
+
     def list_events(self, calendar_id: str, time_min: date, time_max: date) -> list[dict[str, Any]]:
         out = []
         for raw in self.events.get(calendar_id, {}).values():

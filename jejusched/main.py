@@ -17,7 +17,7 @@ from .config import AppConfig, ConfigError, app_home, load_gemini_api_key
 from .core.pipeline import Pipeline
 from .core.state import State
 from .gcal.auth import Authenticator
-from .gcal.client import AuthExpired, CalendarClient, GoogleCalendarClient
+from .gcal.client import AuthExpired, CalendarClient, CalendarError, GoogleCalendarClient
 from .llm.resolver import build_resolver
 from .parsers import DispatchingParser
 from .watcher.intake import Intake
@@ -144,15 +144,46 @@ def cmd_list_accounts(args: argparse.Namespace) -> int:
 
 def cmd_remove_account(args: argparse.Namespace) -> int:
     config = AppConfig.load()
+    auth = Authenticator(config)
     with State(app_home() / "state.db") as state:
         target = state.get_target(args.email)
         if target is None:
             print(f"그런 계정이 없다: {args.email}", file=sys.stderr)
             return 2
-        Authenticator(config).revoke(args.email)
+
+        removed_calendar = False
+        if args.delete_calendar:
+            #  토큰을 폐기하기 **전에** 지워야 한다 — 폐기한 뒤에는 API를 부를 수 없다.
+            if not args.yes and not _confirm(
+                f"{target.calendar_name or '보조 캘린더'}({target.calendar_id})와 "
+                f"그 안의 일정이 모두 삭제됩니다. 되돌릴 수 없습니다."
+            ):
+                print("취소했다.")
+                return 1
+            try:
+                credentials = auth.load(args.email)
+                if credentials is None:
+                    raise CalendarError("저장된 토큰을 쓸 수 없다 — 캘린더를 지우지 못했다")
+                GoogleCalendarClient(credentials).delete_calendar(target.calendar_id)
+                removed_calendar = True
+            except CalendarError as exc:
+                print(f"캘린더 삭제 실패: {exc}", file=sys.stderr)
+                print("계정만 삭제한다. 캘린더는 구글 캘린더에서 직접 지울 수 있다.", file=sys.stderr)
+
+        auth.revoke(args.email)
         state.delete_target(target.id)
-    print(f"계정 삭제: {args.email} (보조 캘린더는 남겨 두었다)")
+    tail = "캘린더도 삭제했다" if removed_calendar else "보조 캘린더는 남겨 두었다"
+    print(f"계정 삭제: {args.email} ({tail})")
     return 0
+
+
+def _confirm(message: str) -> bool:
+    """되돌릴 수 없는 일을 하기 전에 한 번 더 묻는다."""
+    print(message)
+    try:
+        return input("정말 진행할까? [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
 
 
 def cmd_force(args: argparse.Namespace) -> int:
@@ -215,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_remove = sub.add_parser("remove-account", help="계정을 삭제하고 토큰을 폐기한다")
     p_remove.add_argument("email")
+    p_remove.add_argument("--delete-calendar", action="store_true",
+                          help="보조 캘린더와 그 안의 일정까지 삭제한다 (되돌릴 수 없다)")
+    p_remove.add_argument("--yes", "-y", action="store_true", help="확인 질문을 건너뛴다")
     p_remove.set_defaults(func=cmd_remove_account)
 
     p_force = sub.add_parser("force", help="강제 새로고침")
