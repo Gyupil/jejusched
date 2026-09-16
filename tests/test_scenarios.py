@@ -157,14 +157,32 @@ def test_multiple_targets_mirror_and_share_one_llm_call(harness):
 
 
 def test_llm_cache_prevents_a_second_call(harness):
-    """같은 쌍을 다시 만나면 캐시로 해결하고 호출하지 않는다."""
+    """같은 쌍을 다시 만나면 캐시로 해결하고 호출하지 않는다.
+
+    두 번째 0908을 그냥 다시 돌리면 이미 JIBS가 덮어써져 규칙 3 쌍이 **생기지 않아**
+    캐시 경로를 타지 않는다. 그래서 캘린더만 비우고 DB(llm_cache)는 남긴 채
+    0907→0908을 다시 재생해 같은 쌍을 다시 만들어 낸다.
+    """
     h = harness()
     h.apply("0907")
     assert h.apply("0908").llm_calls == 1
+    assert h.state.cached_verdicts([]) == {}  # 아래에서 실제 캐시 내용을 확인한다
+    cached = h.state.conn.execute("SELECT COUNT(*) AS n FROM llm_cache").fetchone()["n"]
+    assert cached == 2, "JIBS 묶음의 쌍 2개가 캐시에 남아야 한다"
 
-    #  같은 상태에서 0908을 다시 적용하면 규칙 3 쌍이 캐시에 있다
-    fresh_state_calls = h.apply("0908").llm_calls
-    assert fresh_state_calls == 0
+    #  캘린더만 새로 — llm_cache는 그대로 둔다
+    h.client = FakeCalendarClient()
+    new_cal = h.client.ensure_calendar("주요일정(자동)")
+    h.state.conn.execute("UPDATE targets SET calendar_id=?", (new_cal,))
+    h.state.conn.execute("DELETE FROM events")
+    h.pipeline = Pipeline(AppConfig(), h.state, FixtureJsonParser(), h.client, h.resolver)
+
+    h.apply("0907")
+    again = h.apply("0908")
+    #  규칙 3 묶음이 **다시 생겼는데도** 호출이 없어야 캐시가 일한 것이다
+    assert len(h.resolver.seen_groups) == 1, "규칙 3 묶음이 다시 생기지 않았다 — 캐시를 검증하지 못한다"
+    assert again.llm_calls == 0, "같은 쌍인데 다시 물었다 — 캐시가 동작하지 않는다"
+    assert "* 제46회 전국장애인체육대회 성화 출발식" in h.summaries()
 
 
 def test_daily_budget_holds_instead_of_calling(harness):
@@ -187,3 +205,57 @@ def test_dry_run_touches_nothing(harness):
     assert result.totals()["created"] == 63  # 계획은 만들어진다
     assert h.client.events[h.calendar_of()] == {}  # 캘린더는 그대로
     assert h.client.calls == []
+
+
+def test_sync_runs_are_journalled(harness, tmp_path):
+    """[10] Journal — 설정 창 "최근 처리"와 `status` 명령이 이걸 읽는다."""
+    import shutil
+
+    from jejusched.watcher.intake import Intake
+    from jejusched.watcher.worker import Worker, WorkerDeps
+
+    h = harness()
+    source = tmp_path / "0907.json"
+    shutil.copy(fixture("0907"), source)
+    #  충분히 오래된 파일은 안정화를 기다리지 않는다 — 시작 시 스캔이 느려지지 않게 한 규칙
+    import os
+    import time
+
+    old_time = time.time() - 600
+    os.utime(source, (old_time, old_time))
+
+    deps = WorkerDeps(
+        config=AppConfig(), state=h.state, pipeline=h.pipeline,
+        intake=Intake(h.state, FixtureJsonParser(), AppConfig()),
+    )
+    import queue
+
+    Worker(deps, queue.Queue()).process([source])
+
+    runs = h.state.recent_runs()
+    assert len(runs) == 1
+    assert runs[0]["created"] == 63 and runs[0]["error"] is None
+    assert runs[0]["target_id"] == h.targets[0].id
+
+
+def test_mark_keeps_every_extended_property(harness):
+    """MARK가 private 맵을 통째로 보내지 않으면 이벤트가 조회에서 빠져 고아가 된다."""
+    h = harness()
+    h.apply("0907")
+    h.apply("0908")
+
+    marked = [
+        e for e in h.client.events[h.calendar_of()].values()
+        if e["summary"].startswith("* ")
+    ]
+    assert marked, "표시된 일정이 있어야 한다"
+    props = marked[0]["extendedProperties"]["private"]
+    assert props["app"] == "jjsched"          # 이게 없으면 다음 조회에서 사라진다
+    assert props["status"] == "marked"
+    assert props["logical_id"] and props["key"] and props["section"]
+
+    #  그리고 실제로 다음 Reconcile에서 다시 읽혀야 한다
+    from jejusched.gcal.client import to_existing_event
+
+    restored = to_existing_event(marked[0])
+    assert restored is not None and restored.is_marked

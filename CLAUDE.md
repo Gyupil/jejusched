@@ -9,14 +9,14 @@ macOS에서 개발·테스트하고 GitHub Actions(`windows-latest`)에서 PyIns
 > 이 문서가 설계 결정의 단일 출처다. 로컬에 design.md가 있으면 먼저 읽되, 없어도
 > 이 문서만으로 같은 품질의 작업이 가능해야 한다.
 >
-> 픽스처가 없으면 의존 테스트 23개가 **건너뛰기(skip)**로 처리된다 — 실패가 아니다.
+> 픽스처가 없으면 의존 테스트 26개가 **건너뛰기(skip)**로 처리된다 — 실패가 아니다.
 > 원본 PDF가 있으면 `python tools/pdf_to_fixture.py`로 되살린다.
 
 ## 이 프로젝트에서 일하는 법
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m pytest -q                      # 픽스처 있으면 73 통과 / 없으면 50 통과 + 23 skip
+.venv/bin/python -m pytest -q                      # 픽스처 있으면 76 통과 / 없으면 50 통과 + 26 skip
 .venv/bin/python -m jejusched status               # 설정·계정 확인
 .venv/bin/python -m jejusched apply tests/fixtures/0910.json --dry-run
 .venv/bin/python -m jejusched add-account          # 브라우저 OAuth (실제 계정 필요)
@@ -40,6 +40,13 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[de
   Reconcile에서 "사용자가 직접 지웠다"를 판별하지 못해 지운 일정이 되살아난다.
 - **PDF 표의 페이지 넘김 행**은 시간 셀이 비어 있다. `tools/pdf_to_fixture.py`가 이걸로 병합을
   판단한다. hwpx 파서를 쓸 때도 같은 종류의 이어지는 행을 조심하라.
+- **`applied` 파일 기록을 내리지 마라.** 시작 시 스캔이 이미 적용한 파일을 `skipped_dup`으로
+  덮으면 `max_applied_file_date()`가 비어 오래된 파일 규칙이 무력해지고, 재시작할 때마다
+  같은 파일이 다시 적용된다 → `State.has_applied()`와 `record_file`의 강등 방지.
+- **MARK도 `extendedProperties.private`를 통째로 보낸다.** 일부만 보내 `app`이 날아가면 그
+  이벤트는 `privateExtendedProperty=app=jjsched` 조회에서 빠져 영영 고아가 된다.
+- **PyInstaller 엔트리(`__main__.py`)는 절대 임포트여야 한다.** 번들은 이 파일을 패키지가
+  아닌 최상위 `__main__`으로 실행하므로 `from .main import ...`은 exe에서만 죽는다.
 
 ## 핵심 개념 (설계 확정 사항)
 
@@ -135,16 +142,35 @@ OAuth 클라이언트 JSON은 **세 곳**에서 같은 함수로 찾는다:
 
 ### 다음에 할 일 (우선순위 순)
 
-1. **M3 실검증** — `add-account`로 개발 계정을 붙이고 `apply --dry-run` → 실적용으로
-   보조 캘린더에 실제로 쓰이는지 확인. 확인할 것: 색상, `transparency`, 설명 본문,
-   `extendedProperties`가 되읽히는지(= 두 번째 실행에서 전부 SKIP 이어야 한다).
+1. **M3 실검증** — `add-account`로 개발 계정을 붙이고 `apply --dry-run` → 실적용.
+   확인할 것: 색상, `transparency`, 설명 본문, 그리고 **두 번째 실행에서 전부 SKIP**인지
+   (= `extendedProperties`가 제대로 되읽힌다는 뜻). 그다음 파일 하나를 지웠다 다시 적용해
+   `* ` 표시와 복구가 도는지 본다.
 2. **M4 실호출 1~2회** — 0908·0910 시나리오로 Gemini를 실제로 불러 판정이 §8과 같은지 확인.
    `llm_cache`에 들어가므로 같은 쌍은 두 번 부르지 않는다.
 3. **M7 태그 빌드** — `v0.1.0` 태그를 밀어 windows-latest 빌드를 돌리고 새 PC에서 zip만으로 실행.
    `GOOGLE_OAUTH_CLIENT_JSON` Secret이 이미 등록되어 있다.
-4. **M6 윈도우 실행 확인** — 트레이·설정 창·마법사는 윈도우에서 한 번 띄워 봐야 한다.
+4. **M6 윈도우 실행 확인** — 아래 "알려진 위험" 참고.
 5. **M8 HwpxParser** — `Parser` Protocol만 만족하면 된다. 픽스처와 파싱 결과가 같은지
    비교하는 테스트를 붙일 것.
+
+### 처음 실제로 호출할 때 볼 것 (예상되는 함정과 대비책)
+
+이미 대비 코드를 넣어 뒀다. 그래도 증상이 나오면 여기를 먼저 본다.
+
+| 증상 | 원인·대응 |
+|---|---|
+| `add-account`가 `Warning: Scope has changed`로 실패 | 구글이 돌려준 스코프가 요청과 다르다(openid가 끼거나 예전에 더 넓게 승인). `auth.add_target()`이 `OAUTHLIB_RELAX_TOKEN_SCOPE=1`을 미리 켠다 |
+| `ensure_calendar`가 목록 조회에서 403 | `calendar.app.created`로 `calendarList.list`가 막히는 환경. 잡아서 바로 생성으로 넘어간다. 계속 문제면 `use_full_calendar_scope=true` |
+| Gemini가 `thinking_config`에 400 | flash-lite가 안 받을 수 있다. 그것만 빼고 같은 모델로 한 번 더 시도한 뒤 폴백으로 넘어간다 |
+| 모든 묶음이 HOLD | 예산 소진(`llm.daily_budget`) 또는 두 모델 모두 실패. 로그에 어느 쪽인지 남는다 |
+
+### 알려진 위험 (M6, 미검증)
+
+`open_settings_window`는 pystray가 메인 스레드를 쥔 상태에서 데몬 스레드에 `ctk.CTk()`
+루트를 만든다. Tcl은 스레드에 예민해서 두 번째로 열 때 오작동할 수 있다. 윈도우에서
+확인하고, 문제가 있으면 설정 창을 **단일 인스턴스로 묶거나** pystray를 별도 스레드로
+돌리고 Tk를 메인 스레드에 두는 쪽으로 바꾼다.
 
 ### 알려진 한계 (설계서에 명시된 것)
 
@@ -164,3 +190,7 @@ OAuth 클라이언트 JSON은 **세 곳**에서 같은 함수로 찾는다:
 | `test_scenarios.py` | §9 실패 모드 — DB 유실·크래시·409·직접삭제·재로그인·다중대상·예산 |
 | `test_intake.py` | §4-[2] 배치 축약·중복·오래된 파일·force |
 | `test_prompts.py` | LLM에 보낼 필드 제한(§11-9), 응답 검증(없는 id·1:1 위반) |
+
+`test_scenarios.py`에는 회귀 방지용으로 남긴 것이 둘 있다 — `test_sync_runs_are_journalled`
+([10] Journal이 실제로 기록되는지)와 `test_mark_keeps_every_extended_property`
+(MARK 후에도 이벤트가 다시 읽히는지). 둘 다 없으면 조용히 망가지는 종류다.

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,6 +141,11 @@ class Authenticator:
     def add_target(self) -> AuthResult:
         """브라우저를 열어 계정을 추가한다. 이메일과 자격증명을 돌려준다."""
         from google_auth_oauthlib.flow import InstalledAppFlow
+
+        #  구글이 돌려주는 스코프 집합은 요청과 정확히 일치하지 않을 때가 있다
+        #  (openid가 끼거나, 그 계정이 예전에 더 넓게 승인했을 때). oauthlib의
+        #  엄격 검사에 걸려 로그인이 실패하는 것을 막는다.
+        os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
         flow = InstalledAppFlow.from_client_config(load_oauth_client(), scopes=self.config.scopes)
         #  port=0 → 임의 포트. 클라이언트의 redirect_uri가 http://localhost여도 동작한다.

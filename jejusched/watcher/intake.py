@@ -89,7 +89,7 @@ class Intake:
             cand = Candidate(path=path, sha256=digest, mtime=mtime)
 
             # 1) 이미 적용한 해시면 건너뛴다
-            if not force and self.state.file_status(digest) == APPLIED:
+            if not force and self.state.has_applied(digest):
                 cand.status, cand.reason = SKIPPED_DUP, "이미 적용한 파일(sha256 동일)"
                 rejected.append(cand)
                 continue

@@ -49,14 +49,15 @@ def run_tray() -> int:
 
     from ..main import build_worker
 
-    worker, work_queue = build_worker(config, state, auth)
-
-    #  최초 실행: 감시 폴더가 없으면 마법사부터 띄운다
+    #  최초 실행: 감시 폴더가 없으면 마법사부터 띄운다.
+    #  워커는 **마법사가 끝난 뒤에** 만든다 — 그래야 마법사가 저장한 Gemini 키가
+    #  build_resolver에 잡힌다(먼저 만들면 첫 동기화가 NullResolver로 돈다).
     if not config.watch_dir:
         from .wizard import run_wizard
 
         config = run_wizard(config, state, auth) or config
-        worker.deps.config = config
+
+    worker, work_queue = build_worker(config, state, auth)
 
     watcher = FolderWatcher(Path(config.watch_dir or "."), config.file_glob, work_queue)
     watcher.start()

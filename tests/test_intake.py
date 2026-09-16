@@ -109,3 +109,22 @@ def test_record_writes_every_decision(gate, folder):
     rows = state.conn.execute("SELECT path, status FROM files ORDER BY path").fetchall()
     assert len(rows) == 4
     assert sum(1 for r in rows if r["status"] == I.SKIPPED_SUPERSEDED) == 3
+
+
+def test_restart_scan_does_not_downgrade_applied(gate, folder):
+    """시작 시 스캔이 `applied` 기록을 `skipped_dup`으로 덮어쓰면 안 된다.
+
+    덮어쓰면 max_applied_file_date()가 비어 오래된 파일 규칙이 무력해지고,
+    재시작할 때마다 같은 파일이 다시 적용된다.
+    """
+    intake, state = gate
+    path = folder / "0910.json"
+    state.record_file(str(path), I.sha256_of(path), I.APPLIED, date(2026, 9, 10))
+
+    intake.record(intake.evaluate([path]))  # 재시작 스캔
+
+    assert state.max_applied_file_date() == date(2026, 9, 10)
+    assert intake.evaluate([path]).chosen is None
+    #  오래된 파일이 늦게 와도 여전히 stale로 걸러져야 한다
+    stale = intake.evaluate([folder / "0908.json"])
+    assert stale.chosen is None and stale.rejected[0].status == I.SKIPPED_STALE

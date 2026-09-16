@@ -138,10 +138,25 @@ class Planner:
             for line in existing.description.split("\n")
             if not line.startswith(MARK_NOTICE_PREFIX)
         ]
+        #  private 맵을 통째로 다시 보낸다. 일부만 보내 `app`/`logical_id`/`key`가
+        #  날아가면 이 이벤트는 `privateExtendedProperty=app=jjsched` 조회에서
+        #  빠져 영영 고아가 된다(복구도, 재인식도 안 된다).
+        private = {
+            "app": APP_TAG,
+            "logical_id": existing.logical_id,
+            "key": existing.event_key,
+            "chash": existing.content_hash,
+            "section": existing.section.value,
+            "status": "marked",
+            "src": (existing.src_file_date or ctx.file_date).isoformat(),
+            #  `seen`은 "마지막으로 파일에 있던 날" — 이번 파일엔 없으므로 그대로 둔다
+            "seen": (existing.last_seen_file_date or existing.src_file_date
+                     or ctx.file_date).isoformat(),
+        }
         body: dict[str, Any] = {
             "summary": f"{self.config.mark_prefix}{existing.title}",
             "description": "\n".join([notice, *kept]).strip(),
-            "extendedProperties": {"private": {"status": "marked"}},
+            "extendedProperties": {"private": private},
         }
         if self.config.mark_change_color:
             body["colorId"] = self.config.mark_color

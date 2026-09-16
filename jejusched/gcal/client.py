@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime, time
 from typing import Any, Protocol, runtime_checkable
 
 from ..core.models import EventStatus, ExistingEvent, Section
 from ..core.normalize import title_norm
+
+log = logging.getLogger(__name__)
 
 APP_TAG = "jjsched"
 _MARK_PREFIX_RE = re.compile(r"^\s*\*+\s*")
@@ -206,17 +209,25 @@ class GoogleCalendarClient:
         `calendar.app.created` 스코프에서는 앱이 만든 캘린더만 보이므로
         목록에 남의 캘린더가 섞이지 않는다.
         """
-        page_token = None
-        while True:
-            listing = self._call(
-                lambda t=page_token: self._service.calendarList().list(pageToken=t, maxResults=250)
-            )
-            for entry in listing.get("items", []):
-                if entry.get("summary") == name:
-                    return entry["id"]
-            page_token = listing.get("nextPageToken")
-            if not page_token:
-                break
+        try:
+            page_token = None
+            while True:
+                listing = self._call(
+                    lambda t=page_token: self._service.calendarList().list(
+                        pageToken=t, maxResults=250
+                    )
+                )
+                for entry in listing.get("items", []):
+                    if entry.get("summary") == name:
+                        return entry["id"]
+                page_token = listing.get("nextPageToken")
+                if not page_token:
+                    break
+        except CalendarError as exc:
+            #  `calendar.app.created` 스코프에서 목록 조회가 막히는 환경이 있다.
+            #  그럴 땐 그냥 만든다 — calendar_id는 한 번만 저장하면 되므로
+            #  최악의 경우가 "캘린더 하나 더 생김"이다(설계서 §5).
+            log.warning("캘린더 목록을 읽지 못했다 — 새로 만든다 (%s)", exc)
 
         created = self._call(
             lambda: self._service.calendars().insert(

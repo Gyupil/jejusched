@@ -138,24 +138,42 @@ class GeminiResolver:
     def _generate(self, model: str, prompt: str, system: str, schema: dict) -> str:
         from google.genai import types
 
-        config: dict[str, object] = {
+        base: dict[str, object] = {
             "system_instruction": system,
             "response_mime_type": "application/json",
             "response_schema": schema,
             "temperature": 0,
         }
+        thinking: object | None = None
         try:
             #  생각을 얕게 — 판정은 대조 작업이지 추론 작업이 아니다
-            config["thinking_config"] = types.ThinkingConfig(thinking_level="LOW")
+            thinking = types.ThinkingConfig(thinking_level="LOW")
         except (AttributeError, TypeError, ValueError):
             log.debug("이 SDK는 thinking_level을 받지 않는다 — 생략한다")
 
-        response = self._get_client().models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(**config),
-        )
-        return response.text or ""
+        attempts: list[dict[str, object]] = []
+        if thinking is not None:
+            attempts.append({**base, "thinking_config": thinking})
+        attempts.append(base)
+
+        last: Exception | None = None
+        for config in attempts:
+            try:
+                response = self._get_client().models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**config),
+                )
+                return response.text or ""
+            except Exception as exc:  # noqa: BLE001
+                #  모델이 thinking_config를 안 받으면 400이 온다. 그걸 "모델 실패"로
+                #  읽어 폴백까지 소진하면 멀쩡한 모델을 두고 전부 HOLD 된다.
+                last = exc
+                if "thinking" in config:
+                    log.info("%s가 thinking_config를 거부했다 — 빼고 다시 시도한다", model)
+                    continue
+                raise
+        raise last or RuntimeError("생성 실패")
 
 
 def build_resolver(config: "AppConfig", api_key: str | None) -> Resolver:  # noqa: F821

@@ -173,6 +173,17 @@ class State:
         ).fetchone()
         return row["status"] if row else None
 
+    def has_applied(self, sha256: str) -> bool:
+        """이 내용을 이미 적용한 적이 있는가.
+
+        같은 내용이 다른 경로로 다시 오면 `skipped_dup` 행이 새로 생겨 최신 행만
+        보면 `applied`가 가려진다. 그래서 최신 상태가 아니라 존재 여부를 본다.
+        """
+        row = self.conn.execute(
+            "SELECT 1 FROM files WHERE sha256=? AND status='applied' LIMIT 1", (sha256,)
+        ).fetchone()
+        return row is not None
+
     def record_file(
         self,
         path: str,
@@ -183,7 +194,7 @@ class State:
         summary: dict[str, Any] | None = None,
     ) -> int:
         row = self.conn.execute(
-            "SELECT id FROM files WHERE sha256=? AND path=?", (sha256, path)
+            "SELECT id, status FROM files WHERE sha256=? AND path=?", (sha256, path)
         ).fetchone()
         payload = (
             file_date.isoformat() if file_date else None,
@@ -193,6 +204,10 @@ class State:
             json.dumps(summary, ensure_ascii=False) if summary else None,
         )
         if row:
+            #  이미 적용한 파일을 건너뛰었다고 해서 `applied`를 내리면 안 된다.
+            #  내리면 max_applied_file_date()가 비어 오래된 파일 규칙이 무력해진다.
+            if row["status"] == "applied" and status.startswith("skipped"):
+                return int(row["id"])
             self.conn.execute(
                 """UPDATE files SET file_date=COALESCE(?, file_date), mtime=COALESCE(?, mtime),
                    status=?, processed_at=?, summary_json=COALESCE(?, summary_json) WHERE id=?""",

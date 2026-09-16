@@ -13,6 +13,7 @@ import logging
 import queue
 import threading
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -27,6 +28,7 @@ from .folder_watch import scan_folder, wait_until_settled
 log = logging.getLogger(__name__)
 
 NETWORK_RETRY_SECONDS = 300  # 5분
+SETTLED_AGE_SECONDS = 60  # 이보다 오래된 파일은 안정화를 기다리지 않는다
 
 
 @dataclass
@@ -109,20 +111,31 @@ class Worker:
             return None
 
         log.info("적용 시작: %s (%s)", chosen.path.name, chosen.file_date)
+        started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
             result = self.deps.pipeline.run(chosen.path, targets, source_name=chosen.path.name)
         except CalendarError as exc:
             #  네트워크·API 문제 — 파일을 in_progress로 두고 나중에 다시 한다
             log.error("%s: 적용 실패, %d초 뒤 재시도 (%s)", chosen.path.name,
                       NETWORK_RETRY_SECONDS, exc)
+            file_id = self.deps.state.record_file(
+                path=str(chosen.path), sha256=chosen.sha256, status=I.IN_PROGRESS,
+                file_date=chosen.file_date, mtime=chosen.mtime,
+            )
+            self.deps.state.record_run(file_id, None, {}, started_at, error=str(exc))
             self._schedule_retry(NETWORK_RETRY_SECONDS)
             return None
 
         status = I.HELD if result.any_held else I.APPLIED
-        self.deps.state.record_file(
+        file_id = self.deps.state.record_file(
             path=str(chosen.path), sha256=chosen.sha256, status=status,
             file_date=chosen.file_date, mtime=chosen.mtime, summary=result.totals(),
         )
+        #  [10] Journal — 대상마다 한 줄. 설정 창의 "최근 처리"가 이걸 읽는다.
+        for outcome in result.outcomes:
+            self.deps.state.record_run(
+                file_id, outcome.target.id, outcome.counts, started_at, outcome.error
+            )
         if status == I.HELD:
             log.warning("%s: 일부 (날짜, 구분)이 보류됐다 — %d분 뒤 재시도",
                         chosen.path.name, self.deps.config.llm.retry_minutes)
@@ -146,6 +159,16 @@ class Worker:
         return self.process(paths, force=True)
 
     def _settle(self, path: Path) -> bool:
+        """방금 쓰인 파일만 안정화를 기다린다.
+
+        시작 시 스캔은 폴더의 모든 파일을 훑으므로, 오래된 파일까지 3초씩
+        기다리면 시작이 몇십 초씩 늦어진다. 충분히 오래된 파일은 이미 안정적이다.
+        """
+        try:
+            if time.time() - path.stat().st_mtime > SETTLED_AGE_SECONDS:
+                return True
+        except OSError:
+            return False
         return wait_until_settled(path, settle_seconds=self.deps.config.settle_seconds)
 
     def _schedule_retry(self, seconds: float) -> None:
