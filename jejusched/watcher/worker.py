@@ -63,12 +63,18 @@ class Worker:
         """트레이 앱에서 백그라운드 스레드로 돈다."""
         self.enqueue_startup_scan()
         while not self._stop.is_set():
-            batch = self._drain()
-            if batch:
-                self.process(batch)
-            elif self._retry_at and time.monotonic() >= self._retry_at:
-                self._retry_at = None
-                self.process(self._pending_paths())
+            #  바깥 그물. `process` 안에서 CalendarError는 이미 다루지만, 그 밖의
+            #  예외가 새 나오면 스레드가 죽어 **재시작 전까지 동기화가 영영 멈춘다.**
+            #  한 파일 때문에 감시 전체를 잃지 않는다.
+            try:
+                batch = self._drain()
+                if batch:
+                    self.process(batch)
+                elif self._retry_at and time.monotonic() >= self._retry_at:
+                    self._retry_at = None
+                    self.process(self._pending_paths())
+            except Exception:  # noqa: BLE001
+                log.exception("워커 처리 중 예외 — 다음 차례에 계속한다")
             self._stop.wait(poll_seconds)
 
     def enqueue_startup_scan(self) -> None:

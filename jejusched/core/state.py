@@ -104,9 +104,20 @@ class State:
     def __init__(self, path: Path | str = ":memory:"):
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(path, isolation_level=None)
+        #  `check_same_thread=False`가 **반드시** 있어야 한다.
+        #  트레이 앱은 메인 스레드에서 State를 만들고 워커·설정 창·강제 새로고침은
+        #  각자 다른 스레드에서 쓴다. 기본값(True)이면 그 스레드들이 전부
+        #  `ProgrammingError: SQLite objects created in a thread ...`로 죽는다.
+        #  마법사만 메인 스레드라 "계정 추가는 되는데 그 뒤로 아무것도 안 되는"
+        #  모습이 된다 — 실제로 v0.1.0에서 그렇게 나왔다.
+        #
+        #  잠금은 따로 두지 않는다. `sqlite3.threadsafety == 3`(serialized)이라
+        #  연결 자체가 뮤텍스를 쥐고, 설계상 쓰는 쪽은 직렬 워커 하나뿐이다.
+        #  `busy_timeout`은 WAL에서 읽기와 쓰기가 겹칠 때 즉시 실패하지 않게 한다.
+        self.conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
 

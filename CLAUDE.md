@@ -54,6 +54,17 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[de
   같은 파일이 다시 적용된다 → `State.has_applied()`와 `record_file`의 강등 방지.
 - **MARK도 `extendedProperties.private`를 통째로 보낸다.** 일부만 보내 `app`이 날아가면 그
   이벤트는 `privateExtendedProperty=app=jjsched` 조회에서 빠져 영영 고아가 된다.
+- **SQLite 연결은 `check_same_thread=False`로 열어야 한다.** 트레이는 메인 스레드에서
+  `State`를 만들고 워커·설정 창·강제 새로고침은 **각자 다른 스레드**에서 쓴다. 기본값이면
+  그 스레드들이 전부 `ProgrammingError`로 죽는다. 마법사만 메인 스레드라 **"계정 추가·로그인·
+  캘린더 생성은 되는데 그 뒤로 아무것도 안 되는"** 모습이 된다 — v0.1.0이 실제로 그랬다.
+- **윈도우 GUI 빌드에는 stderr가 없다(`None`).** 스레드에서 터진 예외는 기본 훅이 stderr에
+  쓰므로 **아무 데도 남지 않는다.** 위 버그로 스레드 넷이 죽는 동안 로그는 깨끗했다.
+  `logging_setup.install_thread_excepthook()`이 이제 로그 파일로 끌어낸다. 이걸 지우지 마라.
+- **테스트가 스레드 경계를 넘지 않으면 이 부류를 못 잡는다.** `Worker.process`를 테스트
+  스레드에서 그냥 부르면 172개가 통과해도 실기에서는 죽는다. `test_watcher.py`의
+  `test_state_is_usable_from_another_thread`·`test_worker_runs_in_a_background_thread`가
+  그 경계를 지킨다. **파일 DB여야 재현된다** — `:memory:`는 스레드 의미가 다르다.
 - **PyInstaller 엔트리(`__main__.py`)는 절대 임포트여야 한다.** 번들은 이 파일을 패키지가
   아닌 최상위 `__main__`으로 실행하므로 `from .main import ...`은 exe에서만 죽는다.
 - **hwpx의 병합 셀은 아예 내보내지지 않는다.** `<hp:tr>`을 순서대로 읽으면 구분이 통째로
