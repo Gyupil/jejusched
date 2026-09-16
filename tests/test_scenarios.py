@@ -269,3 +269,54 @@ def test_cache_records_the_model_that_actually_answered(harness):
 
     models = {r["model"] for r in h.state.conn.execute("SELECT model FROM llm_cache")}
     assert models == {"gemini-3.5-flash-lite"}
+
+
+# ------------------------------------------------- 토큰 저장소 실패 (v0.1.1)
+
+
+def _authenticator(store):
+    from jejusched.config import AppConfig
+    from jejusched.gcal.auth import Authenticator
+
+    return Authenticator(AppConfig(), store=store)
+
+
+class _BrokenStore:
+    """윈도우 DPAPI·맥 keyring이 실패하는 상황. 실제로 프리즈 빌드에서 났다."""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+    def save(self, email, payload):
+        raise self.exc
+
+    def load(self, email):
+        raise self.exc
+
+    def delete(self, email):
+        pass
+
+
+def test_unreadable_token_store_does_not_crash():
+    """저장소가 터져도 **크래시가 아니라** 재로그인 경로로 빠져야 한다."""
+    auth = _authenticator(_BrokenStore(RuntimeError("keychain을 열 수 없다")))
+    assert auth.load("dev@example.com") is None
+
+
+def test_corrupt_token_payload_does_not_crash():
+    class _Garbage:
+        def save(self, email, payload): pass
+        def load(self, email): return "이건 JSON이 아니다"
+        def delete(self, email): pass
+
+    auth = _authenticator(_Garbage())
+    assert auth.load("dev@example.com") is None
+
+
+def test_missing_token_returns_none():
+    class _Empty:
+        def save(self, email, payload): pass
+        def load(self, email): return None
+        def delete(self, email): pass
+
+    assert _authenticator(_Empty()).load("dev@example.com") is None

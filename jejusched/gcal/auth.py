@@ -195,12 +195,24 @@ class Authenticator:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
-        payload = self.store.load(email)
+        #  저장소(윈도우 DPAPI / 맥 keyring)는 사용자 프로필이 바뀌거나 파일이
+        #  깨지면 예외를 던진다. 그대로 두면 `apply`가 raw 트레이스백으로 죽는다.
+        #  None을 주면 호출부가 이미 아는 길(AuthExpired → "재로그인이 필요하다")로
+        #  빠져 그 대상만 건너뛴다. 크래시보다 낫고 로그에도 남는다.
+        try:
+            payload = self.store.load(email)
+        except Exception as exc:  # noqa: BLE001
+            log.error("%s: 저장된 토큰을 읽지 못했다 — 재로그인이 필요하다 (%s)", email, exc)
+            return None
         if not payload:
             return None
-        credentials = Credentials.from_authorized_user_info(
-            json.loads(payload), scopes=self.config.scopes
-        )
+        try:
+            credentials = Credentials.from_authorized_user_info(
+                json.loads(payload), scopes=self.config.scopes
+            )
+        except (ValueError, json.JSONDecodeError) as exc:
+            log.error("%s: 토큰이 깨졌다 — 재로그인이 필요하다 (%s)", email, exc)
+            return None
         if credentials.valid:
             return credentials
         if credentials.expired and credentials.refresh_token:
@@ -209,7 +221,12 @@ class Authenticator:
             except RefreshError as exc:
                 log.error("%s: 토큰 갱신 실패 — 재로그인이 필요하다 (%s)", email, exc)
                 return None
-            self.save(email, credentials)
+            #  갱신은 됐는데 저장만 실패한 경우 — **쓸 수 있는 자격증명을 버리지 않는다.**
+            #  다음 실행에서 한 번 더 갱신하면 그만이다.
+            try:
+                self.save(email, credentials)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("%s: 갱신한 토큰을 저장하지 못했다 — 이번 실행에는 쓴다 (%s)", email, exc)
             return credentials
         return None
 

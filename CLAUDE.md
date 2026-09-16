@@ -65,6 +65,9 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[de
   스레드에서 그냥 부르면 172개가 통과해도 실기에서는 죽는다. `test_watcher.py`의
   `test_state_is_usable_from_another_thread`·`test_worker_runs_in_a_background_thread`가
   그 경계를 지킨다. **파일 DB여야 재현된다** — `:memory:`는 스레드 의미가 다르다.
+- **윈도우 문제는 `jejusched-cli.exe`로 본다.** 트레이 exe는 windowed라 `status`·`apply`를
+  돌려도 화면에 아무것도 안 나온다. 같은 zip에 든 콘솔 버전을 쓰면 결과가 바로 보인다.
+  `jejusched-cli.exe -v apply "경로\파일.hwpx" --dry-run`
 - **PyInstaller 엔트리(`__main__.py`)는 절대 임포트여야 한다.** 번들은 이 파일을 패키지가
   아닌 최상위 `__main__`으로 실행하므로 `from .main import ...`은 exe에서만 죽는다.
 - **hwpx의 병합 셀은 아예 내보내지지 않는다.** `<hp:tr>`을 순서대로 읽으면 구분이 통째로
