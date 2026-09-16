@@ -14,6 +14,11 @@ from jejusched.parsers.fixture_json import FixtureJsonParser
 FIXTURES = Path(__file__).parent / "fixtures"
 FIXTURE_NAMES = ("0907", "0908", "0909", "0910")
 
+#  hwpx 원본과 그 정답지. 원본에는 작성자·문서보안 추적 정보가 들어 있어
+#  공개 저장소에 올리지 않는다(parser_design §2.6) — 픽스처와 같은 규칙이다.
+HWPX_RAWS = Path(__file__).parent.parent / "docs" / "hwpx_raws"
+HWPX_FIXTURES = Path(__file__).parent.parent / "docs" / "hwpx_fixtures"
+
 #  픽스처에는 실제 일정이 들어 있어 저장소에 커밋하지 않는다(.gitignore).
 #  로컬에 원본 PDF가 있으면 `python tools/pdf_to_fixture.py`로 만들어진다.
 #  없는 환경(새 클론, CI)에서는 의존 테스트를 건너뛴다 — 실패가 아니다.
@@ -21,6 +26,22 @@ HAVE_FIXTURES = all((FIXTURES / f"{n}.json").is_file() for n in FIXTURE_NAMES)
 requires_fixtures = pytest.mark.skipif(
     not HAVE_FIXTURES,
     reason="tests/fixtures/*.json이 없다. `python tools/pdf_to_fixture.py`로 생성하라.",
+)
+
+def hwpx_raw(name: str) -> Path:
+    return HWPX_RAWS / f"{name}_주요일정.hwpx"
+
+
+def hwpx_fixture(name: str) -> Path:
+    return HWPX_FIXTURES / f"fixture_{name}.json"
+
+
+HAVE_HWPX = all(
+    hwpx_raw(n).is_file() and hwpx_fixture(n).is_file() for n in FIXTURE_NAMES
+)
+requires_hwpx = pytest.mark.skipif(
+    not HAVE_HWPX,
+    reason="docs/hwpx_raws/*.hwpx 또는 docs/hwpx_fixtures/*.json이 없다(저장소에 커밋하지 않는다).",
 )
 
 CALENDAR_NAME = "주요일정(자동)"
@@ -38,12 +59,16 @@ def fixture(name: str) -> Path:
 class Harness:
     """한 파일씩 순차 적용하며 §8의 숫자를 확인하기 위한 테스트 장치."""
 
-    def __init__(self, config: AppConfig, resolver: FakeResolver, emails: list[str]):
+    def __init__(self, config: AppConfig, resolver: FakeResolver, emails: list[str],
+                 parser=None, source=fixture):
         self.state = State()
         self.client = FakeCalendarClient()
         self.resolver = resolver
         self.config = config
-        self.pipeline = Pipeline(config, self.state, FixtureJsonParser(), self.client, resolver)
+        self.source = source  # 이름 → 경로. hwpx 원본으로 §8을 그대로 돌리기 위한 고리
+        self.pipeline = Pipeline(
+            config, self.state, parser or FixtureJsonParser(), self.client, resolver
+        )
         self.targets = []
         for email in emails:
             cal_id = self.client.ensure_calendar(f"{CALENDAR_NAME}")
@@ -55,7 +80,8 @@ class Harness:
         targets = [self.state.get_target(t.email) for t in self.targets]
         targets = [t for t in targets if t and t.enabled and not t.needs_reauth]
         return self.pipeline.run(
-            fixture(name), targets, reference_year=YEAR, source_name=f"{name}_주요일정.hwpx"
+            self.source(name), targets, reference_year=YEAR,
+            source_name=f"{name}_주요일정.hwpx",
         )
 
     def calendar_of(self, index: int = 0) -> str:
@@ -70,11 +96,13 @@ class Harness:
 @pytest.fixture
 def harness():
     def _make(emails: list[str] | None = None, config: AppConfig | None = None,
-              resolver: FakeResolver | None = None) -> Harness:
+              resolver: FakeResolver | None = None, parser=None, source=fixture) -> Harness:
         return Harness(
             config or AppConfig(),
             resolver if resolver is not None else FakeResolver(SAME_TITLES),
             emails or ["dev@example.com"],
+            parser=parser,
+            source=source,
         )
 
     return _make

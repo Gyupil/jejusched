@@ -55,6 +55,10 @@ class ScheduleItem:
     attendees: str  # 줄바꿈 포함 가능
     department: str
     row_index: int  # 디버깅용
+    #  아래 셋은 hwpx 파서만 채운다. PDF 픽스처 경로는 기본값 그대로라 결과가 바뀌지 않는다.
+    note: str = ""  # 파서가 글자 크기로 갈라낸 부기 줄 (§3.5)
+    highlight: bool = False  # 제목이 빨간 글씨 — 실장 직접 참석 표시
+    table_index: int = 0  # 0=오늘 일정 표, 1=향후 일정 표 (디버깅용)
 
 
 @dataclass
@@ -88,6 +92,9 @@ class CanonicalEvent:
     event_key: str  # sha1(date|section|slot|title_norm)[:16]
     content_hash: str  # sha1(모든 필드)[:16]
     row_index: int = -1
+    #  색 강조는 **해시에 넣지 않는다**. 빨간 글씨만 바뀐 것을 "내용 변경"으로 보면
+    #  캘린더를 헛되이 덮어쓰게 된다(parser_design §4).
+    highlight: bool = False
 
     @property
     def time_text(self) -> str:

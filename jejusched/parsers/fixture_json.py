@@ -35,6 +35,9 @@ class FixtureJsonParser:
                 attendees=row.get("attendees", ""),
                 department=row.get("department", ""),
                 row_index=row.get("row_index", idx),
+                note=row.get("note", ""),
+                highlight=bool(row.get("highlight", False)),
+                table_index=int(row.get("table_index", 0)),
             )
             for idx, row in enumerate(raw["items"])
         ]

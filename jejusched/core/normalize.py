@@ -157,6 +157,10 @@ def to_canonical(item: ScheduleItem, file_date: date) -> CanonicalEvent:
     all_day, start, end = parse_time_cell(item.time_text)
 
     title, note = split_title_and_note(item.title)
+    #  hwpx 파서는 글자 크기로 부기 줄을 이미 갈라 놓는다. PDF 픽스처는 `item.note`가
+    #  빈 문자열이라 아래 결합이 아무 일도 하지 않는다 — content_hash가 그대로다.
+    if item.note:
+        note = "\n".join(filter(None, [item.note.strip(), note]))
     if all_day:
         # 종일인데 행사명이 "(14:00)…"로 시작하면 시간을 note로 보존한다
         m = _LEADING_TIME_RE.match(title)
@@ -190,6 +194,7 @@ def to_canonical(item: ScheduleItem, file_date: date) -> CanonicalEvent:
             hash_text(department), hash_text(note),
         ),
         row_index=item.row_index,
+        highlight=item.highlight,
     )
 
 
