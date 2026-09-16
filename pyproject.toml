@@ -1,0 +1,32 @@
+[project]
+name = "jejusched"
+version = "0.1.0"
+description = "주요일정 hwpx → Google Calendar 자동 동기화"
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.149",
+    "google-auth>=2.35",
+    "google-auth-oauthlib>=1.2",
+    "google-genai>=1.0",
+    "watchdog>=5.0",
+    "keyring>=25.0; sys_platform != 'win32'",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+ui = ["customtkinter>=5.2", "pystray>=0.19", "Pillow>=10.4", "windows-toasts>=1.1; sys_platform == 'win32'"]
+dev = ["pytest>=8.3", "pymupdf>=1.24"]
+
+[project.scripts]
+jejusched = "jejusched.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["jejusched*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:jejusched.*"]

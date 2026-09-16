@@ -1,0 +1,74 @@
+name: build-windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    # 파이프라인은 네트워크 없이 전부 검증된다 — 빌드 전에 먼저 돌린다.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      # 픽스처(tests/fixtures)는 실제 일정이라 커밋하지 않는다 —
+      # §8 회귀 테스트 23개는 CI에서 건너뛴다. 나머지 50개는 여기서 지켜진다.
+      - run: python -m pytest -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+          pip install customtkinter pystray Pillow windows-toasts pywin32
+
+      - name: OAuth 클라이언트 JSON 기록
+        # 저장소에는 없다 — Secret에서 받아 번들에 넣는다(설계서 §5).
+        env:
+          GOOGLE_OAUTH_CLIENT_JSON: ${{ secrets.GOOGLE_OAUTH_CLIENT_JSON }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GOOGLE_OAUTH_CLIENT_JSON)) {
+            Write-Error "GOOGLE_OAUTH_CLIENT_JSON secret이 비어 있다"
+            exit 1
+          }
+          $env:GOOGLE_OAUTH_CLIENT_JSON | Out-File -FilePath build/client_secret.json -Encoding utf8 -NoNewline
+          # 형식만 확인하고 내용은 절대 출력하지 않는다
+          python -c "import json,sys; d=json.load(open('build/client_secret.json',encoding='utf-8')); sys.exit(0 if d.get('installed',{}).get('client_id') else 1)"
+
+      - name: 빌드
+        run: pyinstaller --noconfirm --clean build/jejusched.spec
+
+      - name: 압축
+        shell: pwsh
+        run: Compress-Archive -Path dist/jejusched/* -DestinationPath jejusched-${{ github.ref_name }}.zip
+
+      - name: 아티팩트 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: jejusched-${{ github.ref_name }}
+          path: jejusched-${{ github.ref_name }}.zip
+
+      - name: 릴리스 첨부
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: jejusched-${{ github.ref_name }}.zip
+          body: |
+            zip을 풀고 `jejusched.exe`를 실행하세요.
+            서명되지 않은 실행 파일이라 SmartScreen 경고가 한 번 뜹니다 — "추가 정보 → 실행".
