@@ -65,6 +65,11 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[de
   스레드에서 그냥 부르면 172개가 통과해도 실기에서는 죽는다. `test_watcher.py`의
   `test_state_is_usable_from_another_thread`·`test_worker_runs_in_a_background_thread`가
   그 경계를 지킨다. **파일 DB여야 재현된다** — `:memory:`는 스레드 의미가 다르다.
+- **윈도우에서 "감지가 안 된다"면 `doctor`부터 돌린다.** 폴더·패턴·계정·토큰·게이트를
+  차례로 찍어 **어디서 멈추는지** 알려준다. 파일마다 왜 걸렸는지도 한 줄씩 나온다.
+  로그만 보고 쫓다가 세 번을 헛돌아서 만들었다. `jejusched-cli.exe doctor`
+  `_why_not_interesting`은 `is_interesting`을 사람 말로 옮긴 것이라 **둘이 어긋나면
+  진단이 거짓말을 한다** — `test_doctor_agrees_with_is_interesting`이 묶어 둔다.
 - **윈도우 문제는 `jejusched-cli.exe`로 본다.** 트레이 exe는 windowed라 `status`·`apply`를
   돌려도 화면에 아무것도 안 나온다. 같은 zip에 든 콘솔 버전을 쓰면 결과가 바로 보인다.
   `jejusched-cli.exe -v apply "경로\파일.hwpx" --dry-run`

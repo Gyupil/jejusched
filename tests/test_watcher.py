@@ -468,3 +468,54 @@ def test_force_refresh_runs_in_a_background_thread(harness, tmp_path):
     assert result and result[0] is not None, "새로고침 스레드가 적용까지 가지 못했다"
     assert result[0].totals()["created"] == 63
     assert len(client.events[cal]) == 63
+
+
+# ------------------------------------------------- doctor가 거짓말하지 않게
+
+#  `doctor`의 `_why_not_interesting`은 `is_interesting`의 판정을 사람 말로 옮긴 것이다.
+#  둘이 어긋나면 진단이 **거짓말을 한다** — 윈도우에서 그것만 보고 쫓게 되므로
+#  가장 나쁜 종류의 버그다.
+
+
+@pytest.mark.parametrize(
+    "name, make",
+    [
+        ("0907_주요일정.hwpx", "file"),
+        ("0907_주요일정 (3).hwpx", "file"),
+        ("0907_주요일정.HWPX", "file"),
+        ("~$0907_주요일정.hwpx", "file"),
+        (".숨김.hwpx", "file"),
+        ("0907.hwpx.tmp", "file"),
+        ("0907.crdownload", "file"),
+        ("0907.part", "file"),
+        ("메모.txt", "file"),
+        ("빈파일.hwpx", "empty"),
+        ("폴더.hwpx", "dir"),
+    ],
+)
+def test_doctor_agrees_with_is_interesting(tmp_path, name, make):
+    from jejusched.main import _why_not_interesting
+
+    path = tmp_path / name
+    if make == "dir":
+        path.mkdir()
+    elif make == "empty":
+        path.write_bytes(b"")
+    else:
+        path.write_bytes(b"x" * 100)
+
+    accepted = is_interesting(path, "*.hwpx")
+    reason = _why_not_interesting(path, "*.hwpx")
+    assert accepted == (reason is None), (
+        f"{name}: is_interesting={accepted} 인데 doctor는 {reason!r}라고 말한다"
+    )
+
+
+def test_doctor_explains_a_glob_with_stray_whitespace(tmp_path):
+    """설정 창에 붙여 넣다 들어간 공백은 눈에 안 보이는데 전부 걸러 버린다."""
+    from jejusched.main import _why_not_interesting
+
+    path = tmp_path / "0907_주요일정.hwpx"
+    path.write_bytes(b"x" * 100)
+    assert not is_interesting(path, "*.hwpx ")
+    assert "맞지 않는다" in (_why_not_interesting(path, "*.hwpx ") or "")

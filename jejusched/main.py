@@ -13,7 +13,10 @@ import sys
 from pathlib import Path
 
 from . import logging_setup
-from .config import AppConfig, ConfigError, app_home, load_gemini_api_key
+from . import __version__
+from .config import (
+    APP_NAME, AppConfig, ConfigError, app_home, is_frozen, load_gemini_api_key,
+)
 from .core.pipeline import Pipeline
 from .core.state import State
 from .gcal.auth import Authenticator
@@ -212,6 +215,184 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """어디서 막히는지 단계별로 찍는다 — 읽기만 하고 아무것도 바꾸지 않는다.
+
+    윈도우에서 "감지가 안 된다"를 로그만 보고 쫓는 것이 너무 느려서 만들었다.
+    한 번 돌리면 폴더·패턴·계정·토큰·게이트 중 어디서 걸리는지 바로 보인다.
+    """
+    ok, warn = "  [정상]", "  [문제]"
+    config = AppConfig.load()
+
+    print(f"버전        : {__version__}")
+    print(f"설정 위치   : {app_home()}")
+    print(f"로그        : {logging_setup.log_dir() / 'jejusched.log'}")
+    print(f"번들 실행   : {'예 (exe)' if is_frozen() else '아니오 (소스)'}")
+    print()
+
+    # ── 1. 감시 폴더와 패턴
+    print("① 감시 폴더와 파일 패턴")
+    #  repr로 찍는다 — 설정 창에서 붙여 넣다 들어간 공백·개행이 여기서 드러난다
+    print(f"   watch_dir  = {config.watch_dir!r}")
+    print(f"   file_glob  = {config.file_glob!r}")
+    if config.file_glob != config.file_glob.strip():
+        print(f"{warn} 파일 패턴 앞뒤에 공백이 있다 — 어떤 파일도 맞지 않는다")
+    folder = Path(config.watch_dir) if config.watch_dir else None
+    if folder is None:
+        print(f"{warn} 감시 폴더가 설정되지 않았다")
+        return 1
+    if not folder.is_dir():
+        print(f"{warn} 폴더가 없거나 폴더가 아니다: {folder}")
+        return 1
+    print(f"{ok} 폴더가 있다")
+
+    # ── 2. 폴더 안의 파일이 패턴에 맞는지 (하나씩 이유를 밝힌다)
+    print()
+    print("② 폴더 안의 파일 판정")
+    try:
+        entries = sorted(folder.iterdir())
+    except OSError as exc:
+        print(f"{warn} 폴더를 읽을 수 없다: {exc}")
+        return 1
+    if not entries:
+        print(f"{warn} 폴더가 비어 있다")
+    picked: list[Path] = []
+    for entry in entries:
+        why = _why_not_interesting(entry, config.file_glob)
+        if why is None:
+            picked.append(entry)
+            print(f"   O  {entry.name}")
+        else:
+            print(f"   X  {entry.name}  ← {why}")
+    if not picked:
+        print(f"{warn} 처리 대상이 하나도 없다 — 감지도 새로고침도 여기서 끝난다")
+        return 1
+    print(f"{ok} 대상 {len(picked)}개")
+
+    # ── 3. 계정
+    print()
+    print("③ 등록된 계정")
+    with State(app_home() / "state.db") as state:
+        rows = state.conn.execute("SELECT * FROM targets ORDER BY id").fetchall()
+        if not rows:
+            print(f"{warn} 계정이 없다 — 적용 단계에서 멈춘다")
+            return 1
+        for row in rows:
+            flags = []
+            if not row["enabled"]:
+                flags.append("사용 안 함")
+            if row["needs_reauth"]:
+                flags.append("재로그인 필요")
+            mark = "X " if flags else "O "
+            print(f"   {mark} {row['email']}  캘린더={row['calendar_id']}"
+                  + (f"  ← {', '.join(flags)}" if flags else ""))
+        active = state.active_targets()
+        if not active:
+            print(f"{warn} 쓸 수 있는 계정이 없다 — `적용 시작`까지 가지 못한다")
+            return 1
+        print(f"{ok} 활성 계정 {len(active)}개")
+
+        # ── 4. 토큰
+        print()
+        print("④ 저장된 토큰")
+        auth = Authenticator(config)
+        usable = 0
+        for target in active:
+            credentials = auth.load(target.email)
+            usable += 1 if credentials else 0
+            print(f"   {'O ' if credentials else 'X '} {target.email}"
+                  + ("" if credentials else "  ← 읽지 못했다. 재로그인이 필요하다"))
+        if not usable:
+            #  토큰이 없으면 Reconcile에서 AuthExpired로 그 대상을 통째로 건너뛴다.
+            #  게이트는 파일을 고르는데 캘린더에는 아무것도 안 들어가는 모습이 된다.
+            print(f"{warn} 쓸 수 있는 토큰이 없다 — 파일을 골라도 캘린더에 쓰지 못한다")
+
+        # ── 5. 게이트가 무엇을 고르는지 (읽기만 — record하지 않는다)
+        print()
+        print("⑤ 처리 게이트(Intake) 판정")
+        intake = Intake(state, DispatchingParser(), config)
+        for force in (False, True):
+            label = "지금 새로고침(force)" if force else "평소 파일 감지"
+            try:
+                verdict = intake.evaluate(picked, force=force)
+            except Exception as exc:  # noqa: BLE001
+                print(f"{warn} {label}: 게이트가 터졌다 — {type(exc).__name__}: {exc}")
+                continue
+            if verdict.chosen:
+                print(f"   O  {label} → {verdict.chosen.path.name} "
+                      f"({verdict.chosen.file_date})")
+            else:
+                print(f"   X  {label} → 적용할 파일이 없다")
+            for cand in verdict.rejected:
+                print(f"        건너뜀: {cand.path.name} — {cand.status}: {cand.reason}")
+
+        # ── 6. 이미 적용한 기록
+        print()
+        print("⑥ 지금까지 적용한 기록")
+        print(f"   마지막 적용 파일 날짜: {state.max_applied_file_date() or '(없음)'}")
+        for row in state.conn.execute(
+            "SELECT path, status, file_date FROM files ORDER BY id DESC LIMIT 5"
+        ).fetchall():
+            print(f"   {row['status']:<18} {row['file_date']}  {Path(row['path']).name}")
+
+    # ── 7. 폴더 감시 백엔드
+    print()
+    print("⑦ 폴더 감시(watchdog)")
+    try:
+        from watchdog.observers import Observer
+
+        observer = Observer()
+        print(f"{ok} 사용 가능 — {type(observer).__name__}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"{warn} watchdog을 쓸 수 없다 ({exc}) — 시작 시 스캔만 동작한다")
+
+    # ── 8. 알림
+    print()
+    print("⑧ 토스트 알림")
+    if sys.platform != "win32":
+        print("   (윈도우가 아니다 — 로그로 대체된다)")
+    else:
+        try:
+            from windows_toasts import Toast, WindowsToaster
+
+            toaster = WindowsToaster(APP_NAME)
+            toast = Toast()
+            toast.text_fields = ["주요일정 동기화", "진단 알림입니다"]
+            toaster.show_toast(toast)
+            print(f"{ok} 토스트를 보냈다 — 화면에 떴는지 확인하라")
+        except Exception as exc:  # noqa: BLE001
+            print(f"{warn} 토스트를 띄울 수 없다 ({type(exc).__name__}: {exc})")
+            print("        → 기능은 돌아도 알림만 안 뜬다. 로그로 확인하라")
+
+    print()
+    print("⑨ LLM")
+    print(f"   규칙 3 판정: {'켜짐' if load_gemini_api_key() else '꺼짐 (키 없음 — 정상 동작한다)'}")
+    print()
+    print("여기까지 [문제] 표시가 없으면 `apply`로 실제 적용을 시험하라:")
+    print('   jejusched-cli.exe -v apply "파일경로.hwpx" --dry-run')
+    return 0
+
+
+def _why_not_interesting(path: Path, glob: str) -> str | None:
+    """`is_interesting`이 왜 걸렀는지 사람 말로. 판정 규칙과 **같은 순서**로 본다."""
+    from .watcher.folder_watch import IGNORED_PREFIXES, IGNORED_SUFFIXES
+
+    if path.name.startswith(IGNORED_PREFIXES):
+        return f"무시 대상 이름으로 시작한다 {IGNORED_PREFIXES}"
+    if path.suffix.lower() in IGNORED_SUFFIXES:
+        return f"무시 대상 확장자다 {IGNORED_SUFFIXES}"
+    if not path.match(glob):
+        return f"파일 패턴 {glob!r}과 맞지 않는다"
+    try:
+        if not path.is_file():
+            return "파일이 아니다(폴더 등)"
+        if path.stat().st_size <= 0:
+            return "크기가 0이다"
+    except OSError as exc:
+        return f"읽을 수 없다: {exc}"
+    return None
+
+
 def cmd_tray(args: argparse.Namespace) -> int:
     from .ui.tray import run_tray
 
@@ -250,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
                           help="보조 캘린더와 그 안의 일정까지 삭제한다 (되돌릴 수 없다)")
     p_remove.add_argument("--yes", "-y", action="store_true", help="확인 질문을 건너뛴다")
     p_remove.set_defaults(func=cmd_remove_account)
+
+    sub.add_parser(
+        "doctor", help="어디서 막히는지 단계별로 점검한다 (아무것도 바꾸지 않는다)"
+    ).set_defaults(func=cmd_doctor)
 
     p_force = sub.add_parser("force", help="강제 새로고침")
     p_force.add_argument("path", nargs="?")
