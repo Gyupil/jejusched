@@ -11,6 +11,7 @@ from pathlib import Path
 from ..config import AppConfig, DEFAULT_COLOR_MAP, load_gemini_api_key
 from ..core.state import State
 from ..gcal.auth import Authenticator
+from .. import autostart
 from ..gcal.client import GoogleCalendarClient
 from ..logging_setup import log_dir
 from ..watcher.worker import Worker
@@ -133,14 +134,46 @@ def open_settings_window(config: AppConfig, state: State, auth: Authenticator, w
             messagebox.showerror("재로그인 실패", str(exc))
 
     def remove(email: str):
-        if not messagebox.askyesno("계정 삭제", f"{email}을 삭제할까요?\n보조 캘린더는 남습니다."):
-            return
         target = state.get_target(email)
-        if target:
-            auth.revoke(email)
-            state.delete_target(target.id)
+        if target is None:
+            return
+        also_calendar = delete_calendar_var.get()
+        first = (
+            f"{email}을 삭제할까요?\n"
+            + ("보조 캘린더와 그 안의 일정도 모두 삭제됩니다."
+               if also_calendar else "보조 캘린더는 남습니다.")
+        )
+        if not messagebox.askyesno("계정 삭제", first):
+            return
+        if also_calendar:
+            #  되돌릴 수 없는 일이라 한 번 더 묻는다(완성 절차 1-2의 위험 항목)
+            if not messagebox.askokcancel(
+                "캘린더까지 삭제",
+                f"'{target.calendar_name or '주요일정(자동)'}' 캘린더와 그 안의 일정이\n"
+                f"모두 삭제됩니다. 되돌릴 수 없습니다.\n\n계속할까요?",
+                icon="warning",
+            ):
+                return
+            try:
+                credentials = auth.load(email)
+                if credentials is None:
+                    raise RuntimeError("저장된 토큰을 쓸 수 없습니다")
+                GoogleCalendarClient(credentials).delete_calendar(target.calendar_id)
+            except Exception as exc:  # noqa: BLE001
+                messagebox.showwarning(
+                    "캘린더 삭제 실패",
+                    f"계정만 삭제합니다. 캘린더는 구글 캘린더에서 직접 지울 수 있습니다.\n\n{exc}",
+                )
+        auth.revoke(email)
+        state.delete_target(target.id)
+        delete_calendar_var.set(False)  # 다음 삭제에 딸려가지 않게 되돌린다
         refresh_accounts()
 
+    delete_calendar_var = ctk.BooleanVar(value=False)  # 기본은 반드시 꺼짐
+    ctk.CTkCheckBox(
+        accounts, text="삭제할 때 보조 캘린더와 그 안의 일정도 삭제 (되돌릴 수 없음)",
+        variable=delete_calendar_var,
+    ).pack(pady=(0, 6))
     ctk.CTkButton(accounts, text="계정 추가", command=add_account).pack(pady=(0, 12))
     refresh_accounts()
 
@@ -203,6 +236,19 @@ def open_settings_window(config: AppConfig, state: State, auth: Authenticator, w
     ):
         ctk.CTkCheckBox(form, text=text, variable=var).pack(anchor="w", padx=12, pady=3)
 
+    #  자동 실행 — 바로가기가 실제로 있는지를 진실로 삼는다(설정값보다 정확하다)
+    autostart_ok, autostart_reason = autostart.available()
+    autostart_var = ctk.BooleanVar(value=autostart.is_enabled() if autostart_ok else False)
+    autostart_box = ctk.CTkCheckBox(
+        form, text="윈도우 시작할 때 자동 실행", variable=autostart_var
+    )
+    autostart_box.pack(anchor="w", padx=12, pady=3)
+    if not autostart_ok:
+        autostart_box.configure(state="disabled")
+        ctk.CTkLabel(
+            form, text=f"   {autostart_reason}", anchor="w", text_color="#888",
+        ).pack(anchor="w", padx=12)
+
     def save():
         from .wizard import save_gemini_key
 
@@ -215,6 +261,15 @@ def open_settings_window(config: AppConfig, state: State, auth: Authenticator, w
         config.llm.send_attendees = send_attendees_var.get()
         config.llm.send_location = send_location_var.get()
         config.color_map = {s: v.get() for s, v in color_vars.items()}
+
+        #  자동 실행은 파일 시스템을 건드리므로 실패해도 나머지 저장은 끝내야 한다
+        if autostart_ok and autostart_var.get() != autostart.is_enabled():
+            try:
+                autostart.apply(autostart_var.get())
+            except autostart.AutostartError as exc:
+                messagebox.showwarning("자동 실행 설정 실패", str(exc))
+                autostart_var.set(autostart.is_enabled())
+        config.autostart = autostart_var.get()
         config.save()
         if key_var.get() and "●" not in key_var.get():
             save_gemini_key(key_var.get())

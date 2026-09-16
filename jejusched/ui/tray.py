@@ -19,20 +19,36 @@ from .notify import notify, notify_error
 log = logging.getLogger(__name__)
 
 
+#  달력 색 — 트레이 아이콘과 exe 아이콘이 같은 그림을 쓴다(`tools/make_icon.py`)
+BODY = (40, 96, 176, 255)
+BAND = (28, 68, 128, 255)
+RING = (210, 214, 220, 255)
+CELL = (236, 240, 245, 255)
+
+
 def _icon_image(size: int = 64):
-    """의존성 없이 단색 달력 모양을 그린다 — .ico 파일을 들고 다니지 않아도 된다."""
+    """의존성 없이 단색 달력 모양을 그린다.
+
+    좌표를 전부 `size` 비율로 잡는다. 고정 픽셀로 그리면 256px .ico를 뽑거나
+    고DPI 화면에서 크게 그릴 때 모양이 깨진다.
+    """
     from PIL import Image, ImageDraw
 
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle([4, 10, size - 4, size - 6], radius=8, fill=(40, 96, 176, 255))
-    draw.rectangle([4, 10, size - 4, 24], fill=(28, 68, 128, 255))
+    u = size / 64  # 64px 기준으로 잡은 치수를 실제 크기로 옮기는 배율
+
+    def box(*values):
+        return [round(v * u) for v in values]
+
+    draw.rounded_rectangle(box(4, 10, 60, 58), radius=max(1, round(8 * u)), fill=BODY)
+    draw.rectangle(box(4, 10, 60, 24), fill=BAND)
     for x in (18, 44):  # 고리 두 개
-        draw.rectangle([x - 3, 4, x + 3, 16], fill=(210, 214, 220, 255))
+        draw.rectangle(box(x - 3, 4, x + 3, 16), fill=RING)
     for row in range(2):
         for col in range(3):
             x, y = 12 + col * 14, 32 + row * 12
-            draw.rectangle([x, y, x + 8, y + 7], fill=(236, 240, 245, 255))
+            draw.rectangle(box(x, y, x + 8, y + 7), fill=CELL)
     return image
 
 
@@ -65,12 +81,36 @@ def run_tray() -> int:
     thread = threading.Thread(target=worker.run_forever, name="jjsched-worker", daemon=True)
     thread.start()
 
+    #  설정 창은 **한 번에 하나만** 띄운다.
+    #  pystray가 메인 스레드를 쥔 상태에서 데몬 스레드에 Tk 루트를 또 만들면
+    #  Tcl이 스레드에 예민해 두 번째부터 멈추거나 죽을 수 있다(완성 절차 4-2).
+    settings_thread: list[threading.Thread] = []
+
     def open_settings(icon, item):  # noqa: ANN001, ARG001
         from .settings_window import open_settings_window
 
-        threading.Thread(
-            target=open_settings_window, args=(config, state, auth, worker), daemon=True
-        ).start()
+        if settings_thread and settings_thread[0].is_alive():
+            log.info("설정 창이 이미 열려 있다")
+            notify(APP_NAME, "설정 창이 이미 열려 있습니다")
+            return
+        thread = threading.Thread(
+            target=open_settings_window, args=(config, state, auth, worker),
+            name="jjsched-settings", daemon=True,
+        )
+        settings_thread[:] = [thread]
+        thread.start()
+
+    def check_updates(icon, item):  # noqa: ANN001, ARG001
+        """설계서 §10 — 알려 주기만 하고 내려받지는 않는다."""
+        def _run():
+            from .. import updates
+
+            result = updates.check()
+            notify(APP_NAME, result.message)
+            if result.is_newer:
+                updates.open_releases_page(result.url)
+
+        threading.Thread(target=_run, name="jjsched-update", daemon=True).start()
 
     def force_refresh(icon, item):  # noqa: ANN001, ARG001
         def _run():
@@ -96,6 +136,7 @@ def run_tray() -> int:
         menu=pystray.Menu(
             pystray.MenuItem("설정 열기", open_settings, default=True),
             pystray.MenuItem("지금 새로고침", force_refresh),
+            pystray.MenuItem("새 버전 확인", check_updates),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("종료", quit_app),
         ),

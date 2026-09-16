@@ -25,6 +25,10 @@ a = Analysis(
     hiddenimports=[
         "win32crypt",
         "win32timezone",
+        #  자동 실행 바로가기를 만드는 COM 경로 (jejusched/autostart.py)
+        "win32com.client",
+        "pythoncom",
+        "pywintypes",
         "windows_toasts",
         "google.genai",
         "googleapiclient.discovery",
