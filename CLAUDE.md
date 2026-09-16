@@ -4,23 +4,32 @@
 macOS에서 개발·테스트하고 GitHub Actions(`windows-latest`)에서 PyInstaller로 빌드한다.
 
 > **중요 — 저장소에 없는 것들**
-> `docs/design.md`(원본 설계서), `docs/example_docs/`(샘플 PDF), `tests/fixtures/*.json`은
-> 실제 일정이 담겨 있어 `.gitignore` 대상이다. **새로 클론한 저장소에는 없다.**
-> 이 문서가 설계 결정의 단일 출처다. 로컬에 design.md가 있으면 먼저 읽되, 없어도
-> 이 문서만으로 같은 품질의 작업이 가능해야 한다.
+> `docs/*.md`(설계서·파서 설계·완성 절차), `docs/example_docs/`(샘플 PDF),
+> `docs/hwpx_raws/`(hwpx 원본), `docs/hwpx_fixtures/`(파서 정답지),
+> `tests/fixtures/*.json`은 실제 일정이 담겨 있어 `.gitignore` 대상이다.
+> **새로 클론한 저장소에는 없다.** 이 문서가 설계 결정의 단일 출처다.
 >
-> 픽스처가 없으면 의존 테스트 27개가 **건너뛰기(skip)**로 처리된다 — 실패가 아니다.
-> 원본 PDF가 있으면 `python tools/pdf_to_fixture.py`로 되살린다.
+> hwpx 원본에는 작성자 이름과 문서보안(Fasoo) 추적 ID가 들어 있다 —
+> **공개 저장소에 절대 올리지 않는다.**
+>
+> 자료가 없으면 의존 테스트 45개가 **건너뛰기(skip)**로 처리된다 — 실패가 아니다.
+> 나머지 127개는 어디서나 돈다(hwpx 파서는 합성 문서로도 검증한다).
+> 원본 PDF가 있으면 `python tools/pdf_to_fixture.py`로 픽스처를 되살린다.
 
 ## 이 프로젝트에서 일하는 법
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m pytest -q                      # 픽스처 있으면 77 통과 / 없으면 50 통과 + 27 skip
+.venv/bin/python -m pytest -q                      # 자료 있으면 172 통과 / 없으면 127 통과 + 45 skip
 .venv/bin/python -m jejusched status               # 설정·계정 확인
-.venv/bin/python -m jejusched apply tests/fixtures/0910.json --dry-run
+.venv/bin/python -m jejusched apply docs/hwpx_raws/0910_주요일정.hwpx --dry-run
 .venv/bin/python -m jejusched add-account          # 브라우저 OAuth (실제 계정 필요)
 .venv/bin/python tools/pdf_to_fixture.py           # 샘플 PDF → 픽스처 재생성
+.venv/bin/python tools/make_icon.py                # build/jejusched.ico 재생성
+
+# hwpx가 안 읽힐 때는 **먼저 격자를 눈으로 본다** — 구분이 밀렸는지 한눈에 보인다
+.venv/bin/python -m jejusched.parsers.hwpx.dump 파일.hwpx --grid
+.venv/bin/python -m jejusched.parsers.hwpx.dump 파일.hwpx          # 구분별 건수 + 항목 목록
 ```
 
 - 언어: 코드 주석·커밋·문서는 **한국어**, 식별자는 영어. 설계서 용어(구분/표시/덮어쓰기)를 그대로 쓴다.
@@ -47,6 +56,15 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[de
   이벤트는 `privateExtendedProperty=app=jjsched` 조회에서 빠져 영영 고아가 된다.
 - **PyInstaller 엔트리(`__main__.py`)는 절대 임포트여야 한다.** 번들은 이 파일을 패키지가
   아닌 최상위 `__main__`으로 실행하므로 `from .main import ...`은 exe에서만 죽는다.
+- **hwpx의 병합 셀은 아예 내보내지지 않는다.** `<hp:tr>`을 순서대로 읽으면 구분이 통째로
+  밀려 도지사 일정이 실 일정으로 들어간다. `cellAddr`로 좌표를 잡고 `cellSpan`만큼 펼치면
+  채워 내리기가 저절로 된다 → `parsers/hwpx/table.py:build_grid`.
+- **한 문단 안의 여러 `hp:t`는 공백 없이 이어 붙인다.** 서식이 바뀌는 지점마다 런이 갈린다.
+  공백을 끼우면 `수립(안) 에 따른`이 된다.
+- **부기 줄은 `*`가 아니라 글자 크기로 가른다.** `(여자 개인전 DB, 육성종목)`처럼 기호 없이
+  작기만 한 줄이 있다. `*`·`※` 규칙은 charPr을 못 읽었을 때의 폴백이다.
+- **force의 `user_deleted` 삭제는 파일 날짜 범위로 한정한다.** 범위 없이 지우면 9월 파일을
+  force했을 뿐인데 8월에 사용자가 직접 지운 일정이 되살아난다.
 
 ## 핵심 개념 (설계 확정 사항)
 
@@ -90,12 +108,16 @@ uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[de
 jejusched/
   main.py config.py logging_setup.py
   core/    models.py normalize.py matcher.py planner.py state.py pipeline.py
-  parsers/ base.py(Protocol) fixture_json.py hwpx.py(후순위)
+  autostart.py(윈도우 시작프로그램) updates.py(새 버전 확인)
+  parsers/ base.py(Protocol) fixture_json.py
+    hwpx/  __init__.py(HwpxParser) container.py(ZIP·섹션) xmlutil.py(로컬이름 탐색)
+           charpr.py(색·크기) table.py(격자 복원) extract.py(열 결합·해석) dump.py(진단 CLI)
   gcal/    auth.py client.py(Protocol+Google) fake.py
   llm/     resolver.py(Protocol+Gemini+Fake) prompts.py cache.py budget.py
   watcher/ folder_watch.py intake.py worker.py
   ui/      tray.py settings_window.py wizard.py notify.py
 tools/pdf_to_fixture.py   # 샘플 PDF → tests/fixtures/*.json 재생성
+tools/make_icon.py        # 트레이 그림 → build/jejusched.ico (6가지 크기)
 ```
 
 ## 설정 로딩 (`config.py`)
@@ -138,15 +160,34 @@ OAuth 클라이언트 JSON은 **세 곳**에서 같은 함수로 찾는다:
 | M5 | watcher · intake · force · 배치 축약 | **완료** — intake는 테스트됨, watchdog 실동작은 미검증 |
 | M6 | 트레이 · 설정 창 · 마법사 · 토스트 | **코드 완료, 실행 미검증** (헤드리스라 띄울 수 없음) |
 | M7 | GitHub Actions 빌드 | **워크플로 작성 완료, 실빌드 미검증** |
-| M8 | HwpxParser | **미착수** — `parsers/hwpx.py`가 자리만 잡고 예외를 던진다 |
+| M8 | HwpxParser | **완료 — 원본 4종 검증** (정답지와 필드 단위 완전 일치, 경고 0건) |
+
+### M8 검증 기록 (2026-09-16)
+
+`docs/hwpx_raws/*.hwpx` 4종을 `docs/hwpx_fixtures/fixture_*.json` 정답지와 대조했다.
+
+| 파일 | 항목 | 경고 | 도지사 | 행정부지사 | 기후경제부지사 | 실 일정 |
+|---|---|---|---|---|---|---|
+| 0907 | 63 | 0 | 1 | 2 | 4 | 56 |
+| 0908 | 69 | 0 | 5 | 4 | 4 | 56 |
+| 0909 | 70 | 0 | 4 | 4 | 4 | 58 |
+| 0910 | 60 | 0 | 2 | 1 | 3 | 54 |
+
+- 262개 항목의 **모든 필드**가 정답지와 일치한다(`test_hwpx_matches_the_answer_key`).
+- **§8 기준선이 hwpx 원본으로 그대로 재현된다** — 최종 118건 · `*` 4건
+  (`test_design_section_8_baseline_holds_from_real_hwpx`). PDF 픽스처 경로와 결과가 같다.
+- PDF 픽스처와 다른 항목은 **딱 하나**: 9/14 `전국장애인체육대회 경기장 현장 참관 및 격려`의
+  `(여자 개인전 DB, 육성종목)`. PDF에는 글자 크기가 없어 행사명에 붙어 있었고 hwpx는 부기로
+  가른다 — **hwpx 쪽이 옳다.** 이 차이는 테스트에 명시적으로 적혀 있다.
+- `zipfile` + 표준 `xml.etree`만 쓴다. lxml·한/글 설치를 요구하지 않는다.
 
 ### 다음에 할 일 (우선순위 순)
 
-1. **M7 태그 빌드** — `v0.1.0` 태그를 밀어 windows-latest 빌드를 돌리고 새 PC에서 zip만으로 실행.
+1. **M6 윈도우 실행 확인** — 아래 "알려진 위험" 참고. 자동 실행 체크박스는
+   빌드된 exe에서만 켜진다(`autostart.available()`).
+2. **M7 태그 빌드** — `v0.1.0` 태그를 밀어 windows-latest 빌드를 돌리고 새 PC에서 zip만으로 실행.
    `GOOGLE_OAUTH_CLIENT_JSON` Secret이 이미 등록되어 있다.
-2. **M6 윈도우 실행 확인** — 아래 "알려진 위험" 참고.
-3. **M8 HwpxParser** — `Parser` Protocol만 만족하면 된다. 픽스처와 파싱 결과가 같은지
-   비교하는 테스트를 붙일 것.
+3. **폴더 감시 실동작** — 한/글로 저장할 때 잠금이 풀린 뒤 처리되는지는 윈도우에서만 볼 수 있다.
 
 ## 실계정 검증 기록 (2026-09-16, mamonde1015@gmail.com)
 
@@ -195,9 +236,12 @@ curl 'http://localhost:8765/?state=...&code=...'
 ### 알려진 위험 (M6, 미검증)
 
 `open_settings_window`는 pystray가 메인 스레드를 쥔 상태에서 데몬 스레드에 `ctk.CTk()`
-루트를 만든다. Tcl은 스레드에 예민해서 두 번째로 열 때 오작동할 수 있다. 윈도우에서
-확인하고, 문제가 있으면 설정 창을 **단일 인스턴스로 묶거나** pystray를 별도 스레드로
-돌리고 Tk를 메인 스레드에 두는 쪽으로 바꾼다.
+루트를 만든다. Tcl은 스레드에 예민해서 두 번째로 열 때 오작동할 수 있다.
+
+**1차 대응은 적용했다** — 설정 창을 단일 인스턴스로 묶었다(`ui/tray.py`의 `settings_thread`).
+이미 열려 있으면 새로 만들지 않고 토스트로 알린다. 그래도 윈도우에서 증상이 나오면
+pystray를 별도 스레드로 돌리고 Tk를 메인 스레드에 두는 쪽으로 바꾼다
+(종료 처리 `icon.stop()` ↔ `window.destroy()`를 다시 짜야 한다).
 
 ### 알려진 한계 (설계서에 명시된 것)
 
@@ -217,7 +261,15 @@ curl 'http://localhost:8765/?state=...&code=...'
 | `test_scenarios.py` | §9 실패 모드 — DB 유실·크래시·409·직접삭제·재로그인·다중대상·예산 |
 | `test_intake.py` | §4-[2] 배치 축약·중복·오래된 파일·force |
 | `test_prompts.py` | LLM에 보낼 필드 제한(§11-9), 응답 검증(없는 id·1:1 위반) |
+| `test_hwpx_parser.py` | **M8** — 합성 hwpx로 격자·병합·부기·시간 해석 / 원본 4종 정답지 대조 / §8 기준선을 hwpx로 재현 |
+| `test_watcher.py` | `wait_until_settled`(가짜 시계) · `is_interesting` · force의 `user_deleted` 날짜 범위 · 캘린더 삭제 |
+| `test_autostart.py` | 윈도우 자동 실행 — 소스 실행 중에는 켜지지 않을 것, 끄기는 어디서나 안전할 것 |
+| `test_updates.py` | 새 버전 확인 — **네트워크 실패가 예외로 새 나오지 않을 것** |
 
 `test_scenarios.py`에는 회귀 방지용으로 남긴 것이 둘 있다 — `test_sync_runs_are_journalled`
 ([10] Journal이 실제로 기록되는지)와 `test_mark_keeps_every_extended_property`
 (MARK 후에도 이벤트가 다시 읽히는지). 둘 다 없으면 조용히 망가지는 종류다.
+
+§8 기준선은 **두 경로로** 지킨다 — `test_sequence.py`(PDF 픽스처)와
+`test_hwpx_parser.py::test_design_section_8_baseline_holds_from_real_hwpx`(hwpx 원본).
+둘 다 통과해야 "파서를 갈아 끼워도 캘린더 결과가 같다"가 성립한다.

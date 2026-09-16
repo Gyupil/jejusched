@@ -18,8 +18,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      # 픽스처(tests/fixtures)는 실제 일정이라 커밋하지 않는다 —
-      # §8 회귀 테스트 27개는 CI에서 건너뛴다. 나머지 50개는 여기서 지켜진다.
+      # 실제 일정이 담긴 자료는 커밋하지 않는다 — 그것을 쓰는 45개는 건너뛴다.
+      # 나머지 127개(hwpx 파서 포함)가 빌드 전에 여기서 지켜진다.
       - run: python -m pytest -q
 
   build:

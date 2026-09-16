@@ -5,8 +5,10 @@ build/client_secret.json
 
 # 로컬 전용 자료 — 실제 일정이 담겨 있어 커밋하지 않는다.
 # 픽스처는 `python tools/pdf_to_fixture.py`로 원본 PDF에서 다시 만든다.
-docs/design.md
+docs/*.md
 docs/example_docs/
+docs/hwpx_raws/
+docs/hwpx_fixtures/
 tests/fixtures/
 
 # 파이썬
@@ -15,5 +17,8 @@ __pycache__/
 .venv/
 *.egg-info/
 build/jejusched/
+# setuptools/uv build 부산물 — build/ 안에는 spec과 ico만 남는다
+build/lib/
+build/bdist.*/
 dist/
 .pytest_cache/

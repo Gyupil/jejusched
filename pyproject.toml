@@ -15,7 +15,8 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = ["customtkinter>=5.2", "pystray>=0.19", "Pillow>=10.4", "windows-toasts>=1.1; sys_platform == 'win32'"]
-dev = ["pytest>=8.3", "pymupdf>=1.24"]
+#  pymupdf: tools/pdf_to_fixture.py · Pillow: tools/make_icon.py
+dev = ["pytest>=8.3", "pymupdf>=1.24", "Pillow>=10.4"]
 
 [project.scripts]
 jejusched = "jejusched.main:main"
