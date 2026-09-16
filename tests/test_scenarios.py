@@ -259,3 +259,13 @@ def test_mark_keeps_every_extended_property(harness):
 
     restored = to_existing_event(marked[0])
     assert restored is not None and restored.is_marked
+
+
+def test_cache_records_the_model_that_actually_answered(harness):
+    """폴백이 일어나면 첫 모델이 아니라 **답한 모델**이 캐시에 남아야 한다."""
+    h = harness(resolver=FakeResolver(SAME_TITLES, model="gemini-3.5-flash-lite"))
+    h.apply("0907")
+    h.apply("0908")
+
+    models = {r["model"] for r in h.state.conn.execute("SELECT model FROM llm_cache")}
+    assert models == {"gemini-3.5-flash-lite"}

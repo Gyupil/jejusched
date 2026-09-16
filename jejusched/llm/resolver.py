@@ -32,6 +32,9 @@ class ResolverResult:
     same_pairs: set[str] = field(default_factory=set)
     failed: set[GroupKey] = field(default_factory=set)
     calls: int = 0
+    #  실제로 답한 모델. 폴백이 일어나면 목록의 첫 모델이 아니다 — 캐시에
+    #  잘못 적으면 나중에 "어느 모델이 이렇게 판정했나"를 추적할 수 없다.
+    model: str | None = None
 
 
 @runtime_checkable
@@ -52,9 +55,11 @@ class FakeResolver:
     행사명은 `title_norm`으로 비교하므로 표기가 달라도 원문 그대로 적으면 된다.
     """
 
-    def __init__(self, same_titles: list[tuple[str, str]] | None = None, *, fail: bool = False):
+    def __init__(self, same_titles: list[tuple[str, str]] | None = None, *, fail: bool = False,
+                 model: str = "fake-model"):
         self._same = {(title_norm(a), title_norm(b)) for a, b in (same_titles or [])}
         self._fail = fail
+        self._model = model
         self.calls = 0
         self.seen_groups: list[UnresolvedGroup] = []
 
@@ -71,7 +76,7 @@ class FakeResolver:
                 for ex in group.existing:
                     if (inc.title_norm, ex.title_norm) in self._same:
                         same.add(pair_key(inc, ex))
-        return ResolverResult(same_pairs=same, calls=1)
+        return ResolverResult(same_pairs=same, calls=1, model=self._model)
 
 
 # ------------------------------------------------------ 실제 Gemini 구현 (M4)
@@ -130,7 +135,7 @@ class GeminiResolver:
             same = parse_response(data, payload)
             log.info("규칙 3: %s가 묶음 %d개에서 %d쌍을 같은 일정으로 판정",
                      model, len(groups), len(same))
-            return ResolverResult(same_pairs=same, calls=1)
+            return ResolverResult(same_pairs=same, calls=1, model=model)
 
         log.error("모든 모델이 실패했다 — 묶음 %d개를 HOLD 한다", len(groups))
         return ResolverResult(failed={g.key for g in groups}, calls=1)

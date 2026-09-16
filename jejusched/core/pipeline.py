@@ -206,8 +206,10 @@ class Pipeline:
             for pk in group.pair_keys():
                 fresh[pk] = pk in same
         if fresh:
-            self.state.store_verdicts(fresh, self.config.llm.models[0])
-        return ResolverResult(same_pairs=same, failed=outcome.failed, calls=outcome.calls)
+            self.state.store_verdicts(fresh, outcome.model or self.config.llm.models[0])
+        return ResolverResult(
+            same_pairs=same, failed=outcome.failed, calls=outcome.calls, model=outcome.model
+        )
 
     # -------------------------------------------- [8] Planner + [9] Applier
 

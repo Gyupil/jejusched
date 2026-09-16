@@ -115,7 +115,7 @@ def cmd_add_account(args: argparse.Namespace) -> int:
     config = AppConfig.load()
     auth = Authenticator(config)
     try:
-        result = auth.add_target()
+        result = auth.add_target(port=args.port, open_browser=not args.no_browser)
     except ConfigError as exc:
         print(f"설정 오류: {exc}", file=sys.stderr)
         return 2
@@ -204,7 +204,12 @@ def main(argv: list[str] | None = None) -> int:
     p_apply.add_argument("--dry-run", action="store_true", help="계획만 로그에 쓰고 끝낸다")
     p_apply.set_defaults(func=cmd_apply)
 
-    sub.add_parser("add-account", help="구글 계정을 추가한다").set_defaults(func=cmd_add_account)
+    p_add = sub.add_parser("add-account", help="구글 계정을 추가한다")
+    p_add.add_argument("--port", type=int, default=0,
+                       help="리디렉션을 받을 로컬 포트(기본 임의). 원격 환경에서 주소를 미리 알고 싶을 때")
+    p_add.add_argument("--no-browser", action="store_true",
+                       help="브라우저를 열지 않고 인증 주소만 출력한다")
+    p_add.set_defaults(func=cmd_add_account)
     sub.add_parser("list-accounts", help="등록된 계정을 보여준다").set_defaults(func=cmd_list_accounts)
     sub.add_parser("status", help="현재 설정과 최근 처리를 보여준다").set_defaults(func=cmd_status)
 

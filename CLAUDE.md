@@ -9,14 +9,14 @@ macOS에서 개발·테스트하고 GitHub Actions(`windows-latest`)에서 PyIns
 > 이 문서가 설계 결정의 단일 출처다. 로컬에 design.md가 있으면 먼저 읽되, 없어도
 > 이 문서만으로 같은 품질의 작업이 가능해야 한다.
 >
-> 픽스처가 없으면 의존 테스트 26개가 **건너뛰기(skip)**로 처리된다 — 실패가 아니다.
+> 픽스처가 없으면 의존 테스트 27개가 **건너뛰기(skip)**로 처리된다 — 실패가 아니다.
 > 원본 PDF가 있으면 `python tools/pdf_to_fixture.py`로 되살린다.
 
 ## 이 프로젝트에서 일하는 법
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-.venv/bin/python -m pytest -q                      # 픽스처 있으면 76 통과 / 없으면 50 통과 + 26 skip
+.venv/bin/python -m pytest -q                      # 픽스처 있으면 77 통과 / 없으면 50 통과 + 27 skip
 .venv/bin/python -m jejusched status               # 설정·계정 확인
 .venv/bin/python -m jejusched apply tests/fixtures/0910.json --dry-run
 .venv/bin/python -m jejusched add-account          # 브라우저 OAuth (실제 계정 필요)
@@ -133,8 +133,8 @@ OAuth 클라이언트 JSON은 **세 곳**에서 같은 함수로 찾는다:
 |---|---|---|
 | M1 | models · normalize · matcher · planner · 픽스처 · FakeResolver | **완료** — §8 표와 일치 |
 | M2 | SQLite state · reconcile · FakeCalendarClient · HOLD/재시도 | **완료** — 크래시·직접삭제·다중대상 시나리오 테스트 |
-| M3 | OAuth auth · GoogleCalendarClient · 대상 추가/삭제 | **코드 완료, 실호출 미검증** |
-| M4 | GeminiResolver · 캐시 · 예산 · 폴백 체인 | **코드 완료, 실호출 미검증** (프롬프트 구성·응답 검증은 테스트됨) |
+| M3 | OAuth auth · GoogleCalendarClient · 대상 추가/삭제 | **완료 — 실계정 검증** (2026-09-16, mamonde1015@gmail.com) |
+| M4 | GeminiResolver · 캐시 · 예산 · 폴백 체인 | **완료 — 실호출 검증** (폴백까지 실제로 동작) |
 | M5 | watcher · intake · force · 배치 축약 | **완료** — intake는 테스트됨, watchdog 실동작은 미검증 |
 | M6 | 트레이 · 설정 창 · 마법사 · 토스트 | **코드 완료, 실행 미검증** (헤드리스라 띄울 수 없음) |
 | M7 | GitHub Actions 빌드 | **워크플로 작성 완료, 실빌드 미검증** |
@@ -142,27 +142,54 @@ OAuth 클라이언트 JSON은 **세 곳**에서 같은 함수로 찾는다:
 
 ### 다음에 할 일 (우선순위 순)
 
-1. **M3 실검증** — `add-account`로 개발 계정을 붙이고 `apply --dry-run` → 실적용.
-   확인할 것: 색상, `transparency`, 설명 본문, 그리고 **두 번째 실행에서 전부 SKIP**인지
-   (= `extendedProperties`가 제대로 되읽힌다는 뜻). 그다음 파일 하나를 지웠다 다시 적용해
-   `* ` 표시와 복구가 도는지 본다.
-2. **M4 실호출 1~2회** — 0908·0910 시나리오로 Gemini를 실제로 불러 판정이 §8과 같은지 확인.
-   `llm_cache`에 들어가므로 같은 쌍은 두 번 부르지 않는다.
-3. **M7 태그 빌드** — `v0.1.0` 태그를 밀어 windows-latest 빌드를 돌리고 새 PC에서 zip만으로 실행.
+1. **M7 태그 빌드** — `v0.1.0` 태그를 밀어 windows-latest 빌드를 돌리고 새 PC에서 zip만으로 실행.
    `GOOGLE_OAUTH_CLIENT_JSON` Secret이 이미 등록되어 있다.
-4. **M6 윈도우 실행 확인** — 아래 "알려진 위험" 참고.
-5. **M8 HwpxParser** — `Parser` Protocol만 만족하면 된다. 픽스처와 파싱 결과가 같은지
+2. **M6 윈도우 실행 확인** — 아래 "알려진 위험" 참고.
+3. **M8 HwpxParser** — `Parser` Protocol만 만족하면 된다. 픽스처와 파싱 결과가 같은지
    비교하는 테스트를 붙일 것.
 
-### 처음 실제로 호출할 때 볼 것 (예상되는 함정과 대비책)
+## 실계정 검증 기록 (2026-09-16, mamonde1015@gmail.com)
 
-이미 대비 코드를 넣어 뒀다. 그래도 증상이 나오면 여기를 먼저 본다.
+**§8 표 전체가 실제 Google Calendar + 실제 Gemini에서 그대로 재현됐다.**
+
+| 파일 | 추가 | 덮어쓰기 | 표시 | LLM | 비고 |
+|---|---|---|---|---|---|
+| 0907 | 63 | 0 | 0 | 0 | |
+| 0907 재적용 | **0** | 0 | 0 | 0 | **변경없음 63** — `extendedProperties` 왕복 확인 |
+| 0908 | 23 | 1 | 1 | 1 | `gemini-3.8-flash`가 JIBS 쌍을 "같음" 판정 |
+| 0909 | 19 | 1 | 0 | 0 | |
+| 0910 | 13 | 2 | 3 | 1 | 주 모델 503 → **폴백**이 판정 |
+
+최종 118건 · `*` 표시 4건(성화 출발식 9/10, 임명장 9/10, 현안업무 9/11, 생명지킴 9/18).
+9/11의 "다름" 판정으로 임명장 08:50과 `* 현안업무` 09:00이 나란히 남은 것까지 §8과 일치.
+
+확인된 사실 (설계서가 불확실하다고 적었던 것들):
+- **`calendar.app.created`로 `calendarList.list`가 된다.** 전체 `calendar` 스코프로 넘어갈 필요가 없었다.
+- `gemini-3.8-flash` / `gemini-3.5-flash-lite` 둘 다 실재하고 `response_schema`·`thinking_level`을 받는다.
+- **폴백 체인이 실전에서 발동했다** — 주 모델 503(일시 과부하) → 폴백이 정확히 판정. §9의 대응이 맞았다.
+- 결정적 id(base32hex 26자)를 Calendar가 그대로 받는다.
+- Google은 기본값을 응답에서 생략한다 — `transparency: opaque`는 `None`으로 돌아온다(정상).
+
+### 원격·헤드리스 환경에서 계정 추가하기
+
+브라우저가 다른 기기에 있으면 `http://localhost:<port>`로 리디렉션이 돌아오지 못한다.
+
+```bash
+.venv/bin/python -m jejusched add-account --port 8765 --no-browser   # 인증 URL이 출력된다
+# 다른 기기에서 그 URL을 열고 승인 → "연결할 수 없음" 오류 페이지가 뜬다(정상)
+# 주소창의 전체 URL을 복사해 이 기기에서 연다:
+curl 'http://localhost:8765/?state=...&code=...'
+```
+
+코드 교환은 PKCE 검증자를 쥔 **대기 중인 프로세스**가 해야 하므로 반드시 그 기기에서 열어야 한다.
+
+### 남아 있을 수 있는 함정 (대비 코드는 넣어 뒀다)
 
 | 증상 | 원인·대응 |
 |---|---|
-| `add-account`가 `Warning: Scope has changed`로 실패 | 구글이 돌려준 스코프가 요청과 다르다(openid가 끼거나 예전에 더 넓게 승인). `auth.add_target()`이 `OAUTHLIB_RELAX_TOKEN_SCOPE=1`을 미리 켠다 |
-| `ensure_calendar`가 목록 조회에서 403 | `calendar.app.created`로 `calendarList.list`가 막히는 환경. 잡아서 바로 생성으로 넘어간다. 계속 문제면 `use_full_calendar_scope=true` |
-| Gemini가 `thinking_config`에 400 | flash-lite가 안 받을 수 있다. 그것만 빼고 같은 모델로 한 번 더 시도한 뒤 폴백으로 넘어간다 |
+| `add-account`가 `Warning: Scope has changed`로 실패 | 구글이 돌려준 스코프가 요청과 다르다. `add_target()`이 `OAUTHLIB_RELAX_TOKEN_SCOPE=1`을 미리 켠다 |
+| `ensure_calendar`가 목록 조회에서 403 | 잡아서 바로 생성으로 넘어간다. 계속 문제면 `use_full_calendar_scope=true` |
+| Gemini가 `thinking_config`에 400 | 그것만 빼고 같은 모델로 재시도한 뒤 폴백으로 넘어간다 |
 | 모든 묶음이 HOLD | 예산 소진(`llm.daily_budget`) 또는 두 모델 모두 실패. 로그에 어느 쪽인지 남는다 |
 
 ### 알려진 위험 (M6, 미검증)

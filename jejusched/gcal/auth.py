@@ -138,8 +138,14 @@ class Authenticator:
 
     # ------------------------------------------------------------ 로그인
 
-    def add_target(self) -> AuthResult:
-        """브라우저를 열어 계정을 추가한다. 이메일과 자격증명을 돌려준다."""
+    def add_target(self, *, port: int = 0, open_browser: bool = True) -> AuthResult:
+        """브라우저를 열어 계정을 추가한다. 이메일과 자격증명을 돌려준다.
+
+        `port`를 고정하면 원격·헤드리스 환경에서 리디렉션 주소를 미리 알 수 있다.
+        그런 환경에서는 브라우저가 다른 기기에 있어 `http://localhost:<port>`로
+        돌아오지 못하므로, 사용자가 주소창의 리디렉션 URL을 그대로 이 기기에서
+        열어 주어야 인증이 끝난다.
+        """
         from google_auth_oauthlib.flow import InstalledAppFlow
 
         #  구글이 돌려주는 스코프 집합은 요청과 정확히 일치하지 않을 때가 있다
@@ -150,10 +156,17 @@ class Authenticator:
         flow = InstalledAppFlow.from_client_config(load_oauth_client(), scopes=self.config.scopes)
         #  port=0 → 임의 포트. 클라이언트의 redirect_uri가 http://localhost여도 동작한다.
         credentials = flow.run_local_server(
-            port=0,
+            port=port,
+            open_browser=open_browser,
             prompt="consent",  # refresh_token을 확실히 받는다
             access_type="offline",
-            authorization_prompt_message="브라우저에서 구글 계정으로 로그인하세요...",
+            #  {url}을 반드시 남긴다 — 브라우저가 자동으로 열리지 않는 환경(원격
+            #  세션, 기본 브라우저 미설정)에서 이 주소가 유일한 탈출구다.
+            authorization_prompt_message=(
+                "브라우저에서 구글 계정으로 로그인하세요.\n"
+                "창이 열리지 않으면 아래 주소를 직접 여세요:\n{url}\n"
+                '"확인되지 않은 앱" 경고가 뜨면 고급 → (안전하지 않음)으로 이동을 누르세요.'
+            ),
             success_message="인증이 끝났습니다. 이 창을 닫아도 됩니다.",
         )
         email = self.fetch_email(credentials)
