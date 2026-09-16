@@ -1,0 +1,4 @@
+docs/design.md
+docs/example_docs/
+*.env
+client_secret_*.json

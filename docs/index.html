@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주요일정 캘린더 동기화</title>
+<meta name="description" content="한글 주요일정 문서를 읽어 Google 캘린더에 반영하는 개인용 Windows 도구입니다.">
+<style>
+  :root{
+    --ink:#1c1c1e;
+    --muted:#5b5f66;
+    --line:#d8d5cd;
+    --paper:#fbfaf7;
+    --mark:#1a5c4a;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",system-ui,sans-serif;
+    font-size:17px;
+    line-height:1.75;
+    word-break:keep-all;
+  }
+  .wrap{max-width:38rem;margin:0 auto;padding:4rem 1.5rem 5rem}
+  h1{font-size:1.75rem;line-height:1.35;margin:0 0 .35rem;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 3rem}
+  h2{font-size:1.05rem;margin:2.75rem 0 .6rem;letter-spacing:-.005em}
+  p{margin:0 0 1rem}
+  ul{margin:0 0 1rem;padding-left:1.1rem}
+  li{margin-bottom:.4rem}
+  dl{margin:0;border-top:1px solid var(--line)}
+  dt{font-weight:600;padding-top:1rem}
+  dd{margin:.15rem 0 1rem;color:var(--muted)}
+  code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.86em;background:#efece5;padding:.1em .35em;border-radius:3px;
+    overflow-wrap:anywhere;
+  }
+  a{color:var(--mark);text-underline-offset:3px}
+  a:focus-visible{outline:2px solid var(--mark);outline-offset:3px}
+  footer{margin-top:3.5rem;padding-top:1.25rem;border-top:1px solid var(--line);color:var(--muted);font-size:.92rem}
+  @media (max-width:480px){ body{font-size:16px} .wrap{padding:2.5rem 1.25rem 3.5rem} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>주요일정 캘린더 동기화</h1>
+  <p class="sub">한글(<code>.hwpx</code>) 주요일정 문서를 읽어 Google 캘린더에 반영하는 개인용 Windows 도구입니다.</p>
+
+  <h2>무엇을 하는 프로그램인가</h2>
+  <p>사무실에서는 매일 한 장짜리 주요일정 문서가 새로 만들어집니다. 날짜, 시간, 행사명, 장소, 참석자, 주관부서가 표로 정리된 문서입니다. 이 프로그램은 지정한 폴더에 그 문서가 저장되면 자동으로 내용을 읽어, 사용자의 Google 캘린더에 일정으로 옮깁니다.</p>
+  <p>어제 문서에 이미 들어 있던 일정은 다시 만들지 않고, 시간이나 이름이 바뀐 일정은 최신 문서 내용으로 덮어씁니다. 문서에서 사라진 일정은 지우지 않고 제목 앞에 표시만 남깁니다.</p>
+
+  <h2>Google 계정 권한을 왜 요청하나</h2>
+  <p>일정을 캘린더에 쓰려면 Google 계정의 캘린더 접근 권한이 필요합니다. 요청하는 권한은 아래 두 가지뿐입니다.</p>
+  <dl>
+    <dt>앱이 만든 보조 캘린더 관리</dt>
+    <dd><code>calendar.app.created</code> — 이 프로그램이 직접 만든 전용 캘린더 하나에만 일정을 쓰고 읽습니다. 사용자의 기본 캘린더나 다른 캘린더에는 접근할 수 없습니다.</dd>
+    <dt>계정 이메일 확인</dt>
+    <dd><code>userinfo.email</code>, <code>openid</code> — 여러 계정을 등록했을 때 어느 계정인지 화면에 구분해 표시하기 위해 이메일 주소만 읽습니다.</dd>
+  </dl>
+
+  <h2>어디서 실행되나</h2>
+  <p>사용자의 Windows PC에서만 실행됩니다. 서버가 없고, 문서 내용이나 캘린더 일정이 제작자에게 전송되지 않습니다. 데이터 처리 방식은 <a href="privacy.html">개인정보처리방침</a>에 자세히 적어 두었습니다.</p>
+
+  <h2>이용 범위</h2>
+  <p>공개 배포를 목적으로 하지 않는 개인 업무용 도구이며, 제작자가 직접 아는 소수만 사용합니다. Google 검증을 받지 않았으므로 로그인할 때 확인되지 않은 앱이라는 안내 화면이 한 번 표시됩니다.</p>
+
+  <footer>
+    <p>문의: <a href="mailto:gyupil.ko@gmail.com">gyupil.ko@gmail.com</a><br>
+    <a href="privacy.html">개인정보처리방침</a></p>
+  </footer>
+
+</div>
+</body>
+</html>
